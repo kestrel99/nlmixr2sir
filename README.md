@@ -17,27 +17,42 @@ The result is a set of empirical draws from the parameter uncertainty
 distribution that can be summarized with nonparametric intervals, covariance
 matrices, and diagnostic plots.
 
-## What the Package Implements
+## The details
 
-`runSIR()` implements the SIR workflow for `nlmixr2` FOCE-I fits, following the
-PsN `sir` algorithm where practical.
+`runSIR()` implements the SIR workflow for `nlmixr2` Where practical, it follows
+the same process as Perl-speaks-NONMEM.
 
-In particular, `nlmixr2sir`:
+`nlmixr2sir` builds the initial proposal from `fit$cov`, with optional inflation and
+correlation capping. THETA, OMEGA, and sigma-like parameters are sampled, and 
+parameter-space constraints such as bounds and positive-definite OMEGA matrices are
+enforced.
 
-* Builds the initial proposal from `fit$cov`, with optional inflation and
-  correlation capping.
-* Samples THETA, OMEGA, and sigma-like parameters and enforces parameter-space
-  constraints such as bounds and positive-definite OMEGA matrices.
-* Re-evaluates sampled vectors by fixing parameters in the model and running
-  an nlmixr2 FOCE-I equivalent of NONMEM `MAXEVAL=0`.
-* Computes importance ratios, performs weighted resampling, and updates the
-  proposal for the next iteration.
-* Supports recentering, Box-Cox proposal updates, recovery from saved state,
-  iteration summaries, and diagnostic plots.
+Because `nlmixr2` does not currently report standard errors for OMEGA elements,
+`nlmixr2sir` initializes OMEGA uncertainty separately from `fit$omega` instead
+of reading it from `fit$cov` or `fit$parFixedDf`. The package takes the free
+lower-triangular OMEGA elements, applies a Wishart-style fallback
+(`omegaFallback = "wishart"`), and uses that to approximate an SE for each
+sampled OMEGA element. By default the fallback uses `omegaDf = nSubjects - 1`,
+so diagonal OMEGA elements use `sqrt(2 * omega^2 / df)` and off-diagonal
+elements use `sqrt((omega[i, i] * omega[j, j] + omega[i, j]^2) / df)`.
+
+Those fallback SEs define the initial OMEGA proposal block, with only the free
+lower-triangular elements sampled directly. Each proposed vector is then
+reconstructed into an OMEGA matrix, and non-positive-definite draws are
+discarded. After each SIR iteration, the next proposal covariance is updated
+from the empirical covariance of the retained samples, so later iterations are
+not limited to the initial diagonal OMEGA approximation.
+
+Sampled vectors are re-evaluated by fixing parameters in the model and running
+Bayesian feedback (i.e. the model is evaluated aginst the data without any
+estimation being performed). Importance ratios are computed, weighted resampling
+is performed, and the proposal for the next iteration is updated.
+
+The SIR tool supports recentering, Box-Cox proposal updates, recovery from saved state,
+iteration summaries, and diagnostic plots.
 
 The package is designed to work alongside `nlmixr2utils`, which provides the
-shared worker-plan helpers and core infrastructure used across the split
-`nlmixr2` extension packages.
+shared worker-plan helpers and core infrastructure.
 
 ## Installation
 
@@ -48,29 +63,22 @@ Using `pak`:
 
 ```r
 pak::pkg_install(c(
-  "nlmixr2/nlmixr2utils",
-  "nlmixr2/nlmixr2sir"
+  "kestrel99/nlmixr2utils",
+  "kestrel99/nlmixr2sir"
 ))
 ```
 
 Using `remotes`:
 
 ```r
-remotes::install_github("nlmixr2/nlmixr2utils")
-remotes::install_github("nlmixr2/nlmixr2sir")
-```
-
-If you are working locally with the split repositories:
-
-```r
-devtools::install_local("../nlmixr2utils")
-devtools::install_local("../nlmixr2sir")
+remotes::install_github("kestrel99/nlmixr2utils")
+remotes::install_github("kestrel99/nlmixr2sir")
 ```
 
 ## Basic Use
 
 ```r
-library(nlmixr2data)
+library(nlmixr2)
 library(nlmixr2sir)
 
 one_cmt <- function() {
@@ -91,7 +99,7 @@ one_cmt <- function() {
   })
 }
 
-fit <- nlmixr2utils::nlmixr2(
+fit <- nlmixr2(
   one_cmt,
   data = nlmixr2data::theo_sd,
   est = "focei",
@@ -124,23 +132,18 @@ For practical use:
 * Use `workers` to parallelize OFV evaluation when runs are large enough to
   justify it.
 
-## References
+## Acknowledgments
 
-The SIR methodology implemented here is based primarily on:
+The SIR methodology used here is based primarily on the method of [Dosne 
+et al](https://link.springer.com/article/10.1007/s10928-016-9487-8). The technical implementation is based heavily on the 
+[PsN tool](https://github.com/UUPharmacometrics/PsN/releases/download/v5.7.0/sir_userguide.pdf).
 
-* Dosne, A.-G., Bergstrand, M., & Karlsson, M.O. (2013). An automated sampling
-  importance resampling procedure for estimating parameter uncertainty. *PAGE
-  22*, Abstract 2907.
+## References 
+
 * Dosne, A.-G., Bergstrand, M., Harling, K., & Karlsson, M.O. (2016).
   Improving the estimation of parameter uncertainty distributions in nonlinear
   mixed effects models using sampling importance resampling. *Journal of
   Pharmacokinetics and Pharmacodynamics*, 43(6), 583-596.
-
-The implementation also follows the original PsN SIR workflow:
-
-* Lindbom, L., Ribbing, J., & Jonsson, E.N. (2004). Perl-speaks-NONMEM (PsN):
-  a Perl module for NONMEM related programming. *Computer Methods and Programs
-  in Biomedicine*, 75, 85-94.
 
 For a fuller worked example, see the package vignette:
 `vignette("runSIR", package = "nlmixr2sir")`.
