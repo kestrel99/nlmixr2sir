@@ -1,0 +1,36 @@
+Package: nlmixr2sir
+Title: Sampling Importance Resampling for nlmixr2 Models
+Version: 0.1
+Authors@R: c(
+    person("Justin", "Wilkins", email = "justin.wilkins@occams.com", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0002-7099-9396"))
+  )
+Maintainer: Justin Wilkins <justin.wilkins@occams.com>
+Description: Sampling importance resampling tools for nlmixr2 fits,
+    including proposal construction, weighted resampling, summaries,
+    diagnostics, and iterative SIR workflows.
+Depends:
+    R (>= 4.0)
+License: GPL (>= 3)
+URL: https://github.com/nlmixr2/nlmixr2sir
+BugReports: https://github.com/nlmixr2/nlmixr2sir/issues
+Imports:
+    checkmate,
+    cli (>= 3.4.0),
+    ggplot2,
+    mvtnorm,
+    nlmixr2est (>= 5.0.0),
+    nlmixr2utils,
+    rxode2
+Suggests:
+    future,
+    future.apply,
+    knitr,
+    nlmixr2data,
+    rmarkdown,
+    testthat (>= 3.0.0)
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
