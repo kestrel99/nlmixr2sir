@@ -248,10 +248,13 @@ list.files(attr(sir_result, "outputDir"))
 
 | File | Contents |
 |---|---|
-| `raw_results_sir_iteration{N}.csv` | Full sample/weight/resample table for each iteration |
+| `raw_results.csv` | Canonical shared raw-results table with the reference fit and final resampled vectors |
+| `raw_results.rds` | RDS copy of the canonical raw-results table |
+| `raw_results_header.json` | Schema metadata for the canonical raw-results table |
 | `summary_iterations.csv` | Per-iteration diagnostic summary |
 | `sample_rejection_summary.txt` | Counts of rejected samples (bounds, omega non-PD) |
 | `sir_results.csv` | Final parameter summary (same as the printed table) |
+| `sir_seed.rds` | Persisted SIR master seed |
 | `sir_state.rds` | Full internal state for recovery or adding iterations |
 
 ---

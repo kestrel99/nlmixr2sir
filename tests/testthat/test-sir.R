@@ -923,15 +923,15 @@ test_that("sirRunIteration recentering: newMu shifts when a better sample exists
   }
 })
 
-test_that("sirRunIteration writes CSV when directory is provided", {
+test_that("sirRunIteration keeps raw results in memory when directory is provided", {
   mu <- .theo_fit$theta[rownames(.theo_fit$cov)]
   prop_cov <- sirGetProposalCov(.theo_fit)
   tmp_dir <- tempfile("sir_test_")
   dir.create(tmp_dir)
-  on.exit(unlink(tmp_dir, recursive = TRUE))
+  on.exit(unlink(tmp_dir, recursive = TRUE), add = TRUE)
 
   set.seed(9)
-  suppressMessages(
+  res <- suppressMessages(
     sirRunIteration(
       .theo_fit,
       mu = mu,
@@ -942,10 +942,12 @@ test_that("sirRunIteration writes CSV when directory is provided", {
       directory = tmp_dir
     )
   )
-  expected_csv <- file.path(tmp_dir, "raw_results_sir_iteration2.csv")
-  expect_true(file.exists(expected_csv))
-  df <- utils::read.csv(expected_csv)
-  expect_true("dOFV" %in% names(df))
+  expect_s3_class(res$rawResults, "data.frame")
+  expect_true("dOFV" %in% names(res$rawResults))
+  expect_false(file.exists(file.path(
+    tmp_dir,
+    "raw_results_sir_iteration2.csv"
+  )))
 })
 
 test_that("sirRunIteration chained: iter 2 accepts boxcoxState from iter 1", {
@@ -1249,12 +1251,14 @@ test_that("runSIR runs end-to-end and writes Step 10 artifacts", {
     c("param", "estimate", "sd", "rse", "p2.5", "p97.5") %in%
       names(res)
   ))
-  expect_true(file.exists(file.path(tmp_dir, "raw_results_sir_iteration1.csv")))
-  expect_true(file.exists(file.path(tmp_dir, "raw_results_sir_iteration2.csv")))
+  expect_true(file.exists(file.path(tmp_dir, "raw_results.csv")))
+  expect_true(file.exists(file.path(tmp_dir, "raw_results.rds")))
+  expect_true(file.exists(file.path(tmp_dir, "raw_results_header.json")))
   expect_true(file.exists(file.path(tmp_dir, "summary_iterations.csv")))
   expect_true(file.exists(file.path(tmp_dir, "sample_rejection_summary.txt")))
   expect_true(file.exists(file.path(tmp_dir, "sir_results.csv")))
   expect_true(file.exists(file.path(tmp_dir, "sir_state.rds")))
+  expect_true(file.exists(file.path(tmp_dir, "sir_seed.rds")))
 
   iter_summary <- attr(res, "iterationSummary")
   expect_equal(nrow(iter_summary), 2L)
@@ -1264,13 +1268,19 @@ test_that("runSIR runs end-to-end and writes Step 10 artifacts", {
   iterations <- attr(res, "iterations")
   expect_null(iterations[[2L]]$boxcoxState)
 
-  raw2 <- utils::read.csv(
-    file.path(tmp_dir, "raw_results_sir_iteration2.csv"),
-    check.names = FALSE
+  raw <- nlmixr2utils::readRawResults(tmp_dir)
+  resampled <- attr(res, "resampledMat")
+  expect_equal(raw$sample[[1L]], 0L)
+  expect_equal(raw$role[[1L]], "reference")
+  expect_equal(raw$source, rep("sir", nrow(raw)))
+  expect_equal(sum(raw$role == "sample"), nrow(resampled))
+
+  parsed <- nlmixr2utils::parseRawResultsParams(
+    raw,
+    .theo_fit
   )
-  expect_equal(raw2$sample_id[[1L]], 0L)
-  expect_equal(raw2$dOFV[[1L]], 0)
-  expect_equal(sum(raw2$resamples), iterations[[2L]]$iterSummary$nResampled)
+  expect_equal(length(parsed), nrow(resampled))
+  expect_equal(names(parsed), paste0("sample_", seq_len(nrow(resampled))))
 })
 
 test_that("runSIR rejects invalid workers before running", {

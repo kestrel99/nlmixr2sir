@@ -1286,8 +1286,8 @@ sirUpdateProposal <- function(
 #'   the best vector. Default `TRUE`.
 #' @param boxcox Logical. Apply per-column Box-Cox before updating the
 #'   proposal. Default `TRUE`.
-#' @param directory Optional path. If supplied, writes
-#'   `raw_results_sir_iteration{N}.csv` there.
+#' @param directory Optional path used by higher-level callers that manage
+#'   output files for the overall SIR run.
 #' @param workers Passed to `.withWorkerPlan()` for parallel OFV evaluation.
 #' @param boxcoxState `NULL` or a data frame (`param`, `lambda`, `delta`) from
 #'   a previous call.  When non-`NULL` the proposal is assumed to be in
@@ -1474,14 +1474,6 @@ sirRunIteration <- function(
     capResampling = capResampling
   )
 
-  if (!is.null(directory)) {
-    csv_path <- file.path(
-      directory,
-      sprintf("raw_results_sir_iteration%d.csv", iterNum)
-    )
-    utils::write.csv(raw_df, csv_path, row.names = FALSE)
-  }
-
   # ---- Summary ----
   iter_summary <- data.frame(
     iter = iterNum,
@@ -1535,25 +1527,6 @@ sirRunIteration <- function(
   as.integer(requestedSamples)
 }
 
-.sirResolveOutputDir <- function(directory, fitName) {
-  if (is.null(directory)) {
-    fit_name <- gsub("[^A-Za-z0-9_.]", "_", fitName)
-    pattern <- paste0("^", fit_name, "_sir_[0-9]+$")
-    existing <- sort(grep(
-      pattern,
-      list.dirs(".", full.names = FALSE, recursive = FALSE),
-      value = TRUE
-    ))
-    directory <- paste0(fit_name, "_sir_", length(existing) + 1L)
-  }
-
-  directory <- normalizePath(directory, mustWork = FALSE)
-  if (!dir.exists(directory)) {
-    dir.create(directory, recursive = TRUE)
-  }
-  directory
-}
-
 .sirOriginalEstimates <- function(fit, paramNames) {
   vals <- setNames(rep(NA_real_, length(paramNames)), paramNames)
   theta_names <- intersect(paramNames, names(fit$theta))
@@ -1565,6 +1538,69 @@ sirRunIteration <- function(
     vals[omega_names] <- omega_info$est[match(omega_names, omega_info$colName)]
   }
   vals
+}
+
+.sirCanonicalRawResults <- function(fit, fitName, resampledMat) {
+  if (is.data.frame(resampledMat)) {
+    resampledMat <- as.matrix(resampledMat)
+  }
+  checkmate::assertMatrix(resampledMat, mode = "numeric", min.rows = 1L)
+
+  schema <- nlmixr2utils::rawResultsSchema(fit)
+  param_cols <- c(schema$thetaCols, schema$omegaCols, schema$sigmaCols)
+  na_se <- if (length(param_cols) > 0L) {
+    stats::setNames(rep(NA_real_, length(param_cols)), param_cols)
+  } else {
+    numeric(0)
+  }
+  omega_info <- .sirOmegaProposalInfo(fit)
+  theta_cols <- intersect(schema$thetaCols, colnames(resampledMat))
+
+  rows <- vector("list", nrow(resampledMat) + 1L)
+  rows[[1L]] <- nlmixr2utils::rawResultsRow(
+    fit = fit,
+    source = "sir",
+    hypothesis = "reference",
+    sample = 0L,
+    modelLabel = fitName,
+    role = "reference",
+    schema = schema
+  )
+
+  for (i in seq_len(nrow(resampledMat))) {
+    row_vals <- resampledMat[i, , drop = TRUE]
+    theta_vals <- if (length(theta_cols) > 0L) {
+      stats::setNames(as.numeric(row_vals[theta_cols]), theta_cols)
+    } else {
+      NULL
+    }
+    omega_mat <- if (nrow(omega_info) > 0L) {
+      .sirReconstructOmega(omega_info, row_vals, fit$omega)
+    } else {
+      NULL
+    }
+
+    rows[[i + 1L]] <- nlmixr2utils::rawResultsRow(
+      fit = fit,
+      source = "sir",
+      hypothesis = "resampled",
+      sample = i,
+      modelLabel = fitName,
+      role = "sample",
+      objf = NA_real_,
+      minimizationSuccessful = NA_integer_,
+      covarianceStepSuccessful = NA_integer_,
+      estimateNearBoundary = NA_integer_,
+      significantDigits = NA_real_,
+      conditionNumber = NA_real_,
+      theta = theta_vals,
+      omega = omega_mat,
+      se = na_se,
+      schema = schema
+    )
+  }
+
+  do.call(rbind, rows)
 }
 
 #' Summarize final SIR resampled parameter vectors
@@ -1663,11 +1699,6 @@ sirSummary <- function(resampledMat, fit) {
   invisible(lines)
 }
 
-.sirSaveState <- function(directory, state) {
-  saveRDS(state, file.path(directory, "sir_state.rds"))
-  invisible(state)
-}
-
 #' Run sampling importance resampling for an nlmixr2 fit
 #'
 #' `runSIR()` runs one or more sampling importance resampling iterations using
@@ -1708,7 +1739,9 @@ sirSummary <- function(resampledMat, fit) {
 #'   fallback uncertainty when no SE is available.
 #' @param omegaDf Optional degrees of freedom for the omega Wishart-style
 #'   fallback; defaults to `nsub - 1`.
-#' @param fitName Name used when creating an automatic output directory.
+#' @param fitName Optional fit label used when creating an automatic output
+#'   directory and canonical raw-results metadata. When `NULL` (default), the
+#'   label is derived from the expression supplied to `fit`.
 #' @param ... Reserved for future PsN-compatible inputs.
 #' @return A data frame of final SIR summary statistics with class
 #'   `c("nlmixr2SIR", "data.frame")`. Attributes include
@@ -1742,7 +1775,7 @@ runSIR <- function(
   omegaFallback = c("wishart"),
   sigmaFallbackRse = 30,
   omegaDf = NULL,
-  fitName = as.character(substitute(fit)),
+  fitName = NULL,
   ...
 ) {
   omegaFallback <- match.arg(omegaFallback)
@@ -1775,13 +1808,26 @@ runSIR <- function(
   checkmate::assertFlag(addIterations)
   checkmate::assertNumber(sigmaFallbackRse, lower = 0, finite = TRUE)
   nlmixr2utils::.validateWorkers(workers) # nolint: object_usage_linter.
+  if (is.null(fitName)) {
+    fitName <- nlmixr2utils::deriveFitName(substitute(fit))
+  }
 
   nSamples <- as.integer(nSamples)
   nResample <- as.integer(nResample)
-  output_dir <- .sirResolveOutputDir(directory, fitName)
-  state_file <- file.path(output_dir, "sir_state.rds")
-  saved_state <- if (file.exists(state_file) && (recover || addIterations)) {
-    readRDS(state_file)
+  run_dir <- nlmixr2utils::resolveRunDir(
+    "sir",
+    fitName,
+    restart = !(recover || addIterations),
+    outputDir = directory
+  )
+  output_dir <- run_dir$path
+  if (identical(run_dir$mode, "overwrite") && dir.exists(output_dir)) {
+    unlink(output_dir, recursive = TRUE, force = TRUE)
+  }
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+  master_seed <- nlmixr2utils::withRunSeed(output_dir, prefix = "sir")
+  saved_state <- if (recover || addIterations) {
+    nlmixr2utils::readRunState(output_dir, "sir")
   } else {
     NULL
   }
@@ -1844,28 +1890,33 @@ runSIR <- function(
     cli::cli_inform(
       "Running SIR iteration {iter_num}: {attempted_samples} attempted samples, {nResample[[schedule_idx]]} requested resamples." # nolint: line_length_linter.
     )
-    iter_res <- sirRunIteration(
-      fit = fit,
-      mu = mu,
-      proposalCov = proposal_cov,
-      nSamples = attempted_samples,
-      requestedSamples = requested_samples,
-      nResample = nResample[[schedule_idx]],
-      iterNum = iter_num,
-      capResampling = capResampling,
-      recenter = recenter,
-      boxcox = boxcox,
-      directory = output_dir,
-      workers = workers,
-      boxcoxState = boxcox_state,
-      thetaInflation = thetaInflation,
-      omegaInflation = omegaInflation,
-      sigmaInflation = sigmaInflation,
-      capCorrelation = capCorrelation,
-      omegaFallback = omegaFallback,
-      sigmaFallbackRse = sigmaFallbackRse,
-      omegaDf = omegaDf,
-      isLastIteration = is_last
+    iter_res <- nlmixr2utils::withRunSeed(
+      output_dir,
+      key = paste0("sir-iteration-", iter_num),
+      prefix = "sir",
+      expr = sirRunIteration(
+        fit = fit,
+        mu = mu,
+        proposalCov = proposal_cov,
+        nSamples = attempted_samples,
+        requestedSamples = requested_samples,
+        nResample = nResample[[schedule_idx]],
+        iterNum = iter_num,
+        capResampling = capResampling,
+        recenter = recenter,
+        boxcox = boxcox,
+        directory = output_dir,
+        workers = workers,
+        boxcoxState = boxcox_state,
+        thetaInflation = thetaInflation,
+        omegaInflation = omegaInflation,
+        sigmaInflation = sigmaInflation,
+        capCorrelation = capCorrelation,
+        omegaFallback = omegaFallback,
+        sigmaFallbackRse = sigmaFallbackRse,
+        omegaDf = omegaDf,
+        isLastIteration = is_last
+      )
     )
 
     iter_results[[as.character(iter_num)]] <- iter_res
@@ -1879,7 +1930,7 @@ runSIR <- function(
     prev_attempted <- iter_res$iterSummary$nAttempted
     prev_successful <- iter_res$iterSummary$nSuccessful
 
-    .sirSaveState(
+    nlmixr2utils::writeRunState(
       output_dir,
       list(
         completedIterations = iter_num,
@@ -1889,7 +1940,8 @@ runSIR <- function(
         iterations = iter_results,
         iterationSummary = iter_summary,
         result = NULL
-      )
+      ),
+      "sir"
     )
   }
 
@@ -1902,6 +1954,8 @@ runSIR <- function(
     file.path(output_dir, "sir_results.csv"),
     row.names = FALSE
   )
+  raw_results <- .sirCanonicalRawResults(fit, fitName, final_iter$resampledMat)
+  nlmixr2utils::writeRawResults(raw_results, output_dir)
 
   class(summary_df) <- c("nlmixr2SIR", "data.frame")
   attr(summary_df, "iterationSummary") <- iter_summary
@@ -1911,9 +1965,11 @@ runSIR <- function(
   attr(summary_df, "corMatrix") <- cor_mat
   attr(summary_df, "outputDir") <- output_dir
   attr(summary_df, "fitName") <- fitName
+  attr(summary_df, "rawResults") <- raw_results
+  attr(summary_df, "seed") <- master_seed
   attr(summary_df, "call") <- match.call()
 
-  .sirSaveState(
+  nlmixr2utils::writeRunState(
     output_dir,
     list(
       completedIterations = tail(iter_summary$iter, 1L),
@@ -1923,7 +1979,8 @@ runSIR <- function(
       iterations = iter_results,
       iterationSummary = iter_summary,
       result = summary_df
-    )
+    ),
+    "sir"
   )
 
   summary_df

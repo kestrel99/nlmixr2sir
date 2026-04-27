@@ -1,6 +1,6 @@
 Package: nlmixr2sir
 Title: Sampling Importance Resampling for nlmixr2 Models
-Version: 0.1
+Version: 0.2
 Authors@R: c(
     person("Justin", "Wilkins", email = "justin.wilkins@occams.com", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0002-7099-9396"))
@@ -20,7 +20,7 @@ Imports:
     ggplot2,
     mvtnorm,
     nlmixr2est (>= 5.0.0),
-    nlmixr2utils,
+    nlmixr2utils (>= 0.2),
     rxode2
 Suggests:
     future,

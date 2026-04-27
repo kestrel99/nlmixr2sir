@@ -22,7 +22,7 @@ runSIR(
   omegaFallback = c("wishart"),
   sigmaFallbackRse = 30,
   omegaDf = NULL,
-  fitName = as.character(substitute(fit)),
+  fitName = NULL,
   ...
 )
 }
@@ -74,7 +74,9 @@ fallback uncertainty when no SE is available.}
 \item{omegaDf}{Optional degrees of freedom for the omega Wishart-style
 fallback; defaults to \code{nsub - 1}.}
 
-\item{fitName}{Name used when creating an automatic output directory.}
+\item{fitName}{Optional fit label used when creating an automatic output
+directory and canonical raw-results metadata. When \code{NULL} (default), the
+label is derived from the expression supplied to \code{fit}.}
 
 \item{...}{Reserved for future PsN-compatible inputs.}
 }
