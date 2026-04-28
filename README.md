@@ -147,3 +147,9 @@ et al](https://link.springer.com/article/10.1007/s10928-016-9487-8). The technic
 
 For a fuller worked example, see the package vignette:
 `vignette("runSIR", package = "nlmixr2sir")`.
+
+## Credit where it's due
+
+`nlmixr2sir` is based on the [PsN implementation](https://github.com/UUPharmacometrics/PsN/releases/download/v5.7.0/sir_userguide.pdf) written by Lars Lindbom, 
+Niclas Jonsson, Pontus Pihlgren, Mats Karlsson, Andrew Hooker, Kajsa Harling, 
+Rikard Nordgren and Svetlana Freiberga.
