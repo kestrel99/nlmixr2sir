@@ -18,7 +18,14 @@ runSIRControl(
   addIterations = FALSE,
   omegaFallback = c("cov", "wishart"),
   sigmaFallbackRse = 30,
-  omegaDf = NULL
+  omegaDf = NULL,
+  rseTheta = NULL,
+  rseOmega = NULL,
+  rseSigma = NULL,
+  covmatInput = NULL,
+  rawresInput = NULL,
+  offsetRawres = 1L,
+  inFilter = NULL
 )
 }
 \arguments{
@@ -71,6 +78,38 @@ reports a standard error.}
 
 \item{omegaDf}{Optional degrees of freedom for the Wishart-style OMEGA
 fallback; defaults to \code{nsub - 1}. Unused when OMEGA comes from \code{fit$cov}.}
+
+\item{rseTheta, rseOmega, rseSigma}{Relative standard errors, as percentages,
+used to build a diagonal proposal without a covariance step. Each is
+either a single value for the whole class or one value per estimated
+(non-fixed) element of it -- THETA, OMEGA \strong{diagonals}, residual error.
+Diagonal variances come out as \code{(rse * estimate / 100)^2}; OMEGA
+off-diagonals are derived from the two diagonals they connect. Following
+PsN, a scalar \code{rseTheta} fills in an unset \code{rseOmega} and \code{rseSigma}, a
+vector \code{rseTheta} does not, and setting \code{rseOmega} without \code{rseTheta} is
+an error. Cannot be combined with \code{covmatInput} or with inflation.}
+
+\item{covmatInput}{A proposal covariance supplied directly: a numeric
+matrix, a path to a NONMEM-style \code{.cov} file, or the string \code{"identity"}.
+An unnamed matrix must cover the whole SIR parameter vector in order; a
+named one may be a subset, keyed by either SIR or \code{fit$cov} names.
+\code{"identity"} together with inflation is the cheap "any diagonal proposal"
+route. Cannot be combined with \code{rseTheta}.}
+
+\item{rawresInput}{A canonical raw-results file path or data frame whose
+parameter vectors seed the first proposal, as PsN's iteration 0 does: the
+empirical mean and covariance of the supplied vectors become the
+iteration-1 proposal. Any canonical raw-results file works, including one
+written by \code{nlmixr2boot}. Cannot be combined with \code{rseTheta} or
+\code{covmatInput}.}
+
+\item{offsetRawres}{Integer. Skip raw-results samples numbered below this.
+Defaults to \code{1}, which drops the reference row.}
+
+\item{inFilter}{Optional filter applied to the raw-results rows before they
+are used, in any form accepted by
+\code{\link[nlmixr2utils:setupRawResultsFilter]{nlmixr2utils::setupRawResultsFilter()}}. Only meaningful with
+\code{rawresInput}.}
 }
 \value{
 An object of class \code{runSIRControl}.

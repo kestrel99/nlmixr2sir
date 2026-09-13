@@ -38,9 +38,6 @@ sirRunIteration <- function(
   checkmate::assertFlag(recenter)
   checkmate::assertFlag(boxcox)
   checkmate::assertFlag(isLastIteration)
-  checkmate::assertNumber(thetaInflation, lower = 0, finite = TRUE)
-  checkmate::assertNumber(omegaInflation, lower = 0, finite = TRUE)
-  checkmate::assertNumber(sigmaInflation, lower = 0, finite = TRUE)
   checkmate::assertNumber(capCorrelation, lower = 0, upper = 1, finite = TRUE)
   checkmate::assertNumber(sigmaFallbackRse, lower = 0, finite = TRUE)
   if (!is.null(directory)) {
@@ -103,7 +100,6 @@ sirRunIteration <- function(
   # ---- 5. Handle failures ----
   n_failed <- sum(is.na(dofv))
   n_success <- n_collected - n_failed
-  n_resample_adj <- nResample
   if (n_success == 0L) {
     eval_errors <- attr(ofv_vals, "evalErrors")
     cli::cli_abort(c(
@@ -114,14 +110,22 @@ sirRunIteration <- function(
       }
     ))
   }
-  if (abs(n_success - requestedSamples) / requestedSamples > 0.05) {
-    n_resample_adj <- max(
-      1L,
-      as.integer(floor(nResample * n_success / requestedSamples))
-    )
+  n_resample_adj <- .sirAdjustedResamples(
+    requestedResamples = nResample,
+    requestedSamples = requestedSamples,
+    successfulCount = n_success
+  )
+  if (n_resample_adj != nResample) {
     cli::cli_warn(c(
       "{n_success}/{requestedSamples} requested SIR samples had usable OFV evaluations.",
       "i" = "Adjusting nResample to {n_resample_adj}."
+    ))
+  }
+  if (n_resample_adj < 1L) {
+    cli::cli_abort(c(
+      "Turnout scaled the resample count below one.",
+      "i" = "{n_success}/{requestedSamples} samples usable, {nResample} requested resamples.",
+      "i" = "Increase {.arg nSamples} or {.arg nResample}."
     ))
   }
 
@@ -207,6 +211,14 @@ sirRunIteration <- function(
   )
 }
 
+# Port of PsN update_attempted_samples() (lib/tool/sir.pm). Compensates the
+# next iteration's sample count for samples lost to failed OFV evaluation, so
+# the requested count is what actually survives.
+#
+# Matches PsN exactly: triggers on loss only, at turnout <= 0.95 inclusive, and
+# rounds half away from zero. The previous implementation used a strict `<`,
+# `ceiling()`, and a max() clamp against the requested count, which gave 112
+# where PsN's own oracle says 111.
 .sirAdjustedAttemptedSamples <- function(
   requestedSamples,
   previousAttempted = NULL,
@@ -219,13 +231,37 @@ sirRunIteration <- function(
   checkmate::assertCount(previousAttempted, positive = TRUE)
   checkmate::assertCount(previousSuccessful, positive = TRUE)
 
-  if (previousSuccessful < 0.95 * previousAttempted) {
-    return(max(
-      as.integer(requestedSamples),
-      as.integer(ceiling(
-        requestedSamples * previousAttempted / previousSuccessful
-      ))
+  previousTurnout <- previousSuccessful / previousAttempted
+  if (previousTurnout > 1) {
+    cli::cli_abort(c(
+      "More successful samples than attempted in the previous iteration.",
+      "i" = "{previousSuccessful} successful of {previousAttempted} attempted."
     ))
   }
+  if (previousTurnout <= 0.95) {
+    return(.sirRound(requestedSamples / previousTurnout))
+  }
   as.integer(requestedSamples)
+}
+
+# Port of PsN update_actual_resamples() (lib/tool/sir.pm). Scales the resample
+# count by this iteration's turnout, on a gain *or* a loss of at least 5%.
+#
+# `turnout` is measured against the originally requested sample count, not the
+# compensated attempted count -- PsN's oracle pins this: 109 successful of a
+# requested 100 gives turnout 1.09 even though 109 were attempted.
+.sirAdjustedResamples <- function(
+  requestedResamples,
+  requestedSamples,
+  successfulCount
+) {
+  checkmate::assertCount(requestedResamples, positive = TRUE)
+  checkmate::assertCount(requestedSamples, positive = TRUE)
+  checkmate::assertCount(successfulCount)
+
+  turnout <- successfulCount / requestedSamples
+  if (abs(turnout - 1) >= 0.05) {
+    return(.sirRound(requestedResamples * turnout))
+  }
+  as.integer(requestedResamples)
 }

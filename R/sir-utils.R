@@ -53,3 +53,17 @@
   dimnames(out) <- dim_names
   out
 }
+
+# PsN's math.pm round(): half away from zero, truncating toward zero first.
+# R's round() is banker's rounding and differs on an exact .5 -- round(20.5)
+# is 20 in R and 21 in PsN -- so the sample-count adjustments cannot use it
+# and stay bit-comparable with PsN's own unit-test oracles.
+.sirRound <- function(x) {
+  intPart <- trunc(x)
+  rem <- x - intPart
+  as.integer(ifelse(
+    rem >= 0,
+    ifelse(rem >= 0.5, intPart + 1, intPart),
+    ifelse(abs(rem) >= 0.5, intPart - 1, intPart)
+  ))
+}

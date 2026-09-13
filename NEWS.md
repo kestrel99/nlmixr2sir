@@ -10,6 +10,12 @@
 
 * `runSIR()` now takes its run settings through `control = runSIRControl()` rather than as flat arguments, cutting its signature from 21 arguments to 6. Passing a setting directly to `runSIR()` is an error naming `runSIRControl()`.
 
+* `runSIR()` no longer requires a successful covariance step. `runSIRControl()` gains three alternative proposal sources, following PsN: `rseTheta`/`rseOmega`/`rseSigma` build a diagonal proposal from relative standard errors, `covmatInput` takes a covariance matrix, a NONMEM-style `.cov` file, or `"identity"`, and `rawresInput` seeds the first proposal from the parameter vectors in a canonical raw-results file (with `offsetRawres` and `inFilter`). These exist for the models whose covariance step fails, which is where SIR is most wanted.
+
+* `runSIRControl()` inflation arguments accept a vector as well as a scalar: one value per estimated THETA, OMEGA diagonal, or residual-error parameter. OMEGA off-diagonals derive `sqrt(infl_i) * sqrt(infl_j)` from the two diagonals they connect, as PsN does.
+
+* The sample and resample count adjustments now match PsN exactly, and are checked against the oracle values in PsN's own unit tests. The attempted-sample count previously used `ceiling()` where PsN uses round-half-away-from-zero, and the resample count used `floor()` and a strict `>` where PsN uses rounding and `>=`; both also clamped in ways PsN does not.
+
 * `runSIR()` gains `rxThreads`, controlling rxode2 OpenMP threads per worker during OFV evaluation. `nlmixr2utils` 0.3 requires it whenever `workers > 1`, so parallel SIR runs previously aborted on most multicore machines.
 
 * `runSIR()` now applies `sigmaInflation` to residual-error parameters. They were classified as THETA, which made the argument silently unreachable.

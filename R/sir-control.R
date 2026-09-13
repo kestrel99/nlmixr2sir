@@ -43,6 +43,33 @@
 #'   reports a standard error.
 #' @param omegaDf Optional degrees of freedom for the Wishart-style OMEGA
 #'   fallback; defaults to `nsub - 1`. Unused when OMEGA comes from `fit$cov`.
+#' @param rseTheta,rseOmega,rseSigma Relative standard errors, as percentages,
+#'   used to build a diagonal proposal without a covariance step. Each is
+#'   either a single value for the whole class or one value per estimated
+#'   (non-fixed) element of it -- THETA, OMEGA **diagonals**, residual error.
+#'   Diagonal variances come out as `(rse * estimate / 100)^2`; OMEGA
+#'   off-diagonals are derived from the two diagonals they connect. Following
+#'   PsN, a scalar `rseTheta` fills in an unset `rseOmega` and `rseSigma`, a
+#'   vector `rseTheta` does not, and setting `rseOmega` without `rseTheta` is
+#'   an error. Cannot be combined with `covmatInput` or with inflation.
+#' @param covmatInput A proposal covariance supplied directly: a numeric
+#'   matrix, a path to a NONMEM-style `.cov` file, or the string `"identity"`.
+#'   An unnamed matrix must cover the whole SIR parameter vector in order; a
+#'   named one may be a subset, keyed by either SIR or `fit$cov` names.
+#'   `"identity"` together with inflation is the cheap "any diagonal proposal"
+#'   route. Cannot be combined with `rseTheta`.
+#' @param rawresInput A canonical raw-results file path or data frame whose
+#'   parameter vectors seed the first proposal, as PsN's iteration 0 does: the
+#'   empirical mean and covariance of the supplied vectors become the
+#'   iteration-1 proposal. Any canonical raw-results file works, including one
+#'   written by `nlmixr2boot`. Cannot be combined with `rseTheta` or
+#'   `covmatInput`.
+#' @param offsetRawres Integer. Skip raw-results samples numbered below this.
+#'   Defaults to `1`, which drops the reference row.
+#' @param inFilter Optional filter applied to the raw-results rows before they
+#'   are used, in any form accepted by
+#'   [nlmixr2utils::setupRawResultsFilter()]. Only meaningful with
+#'   `rawresInput`.
 #'
 #' @return An object of class `runSIRControl`.
 #' @examples
@@ -62,7 +89,14 @@ runSIRControl <- function(
   addIterations = FALSE,
   omegaFallback = c("cov", "wishart"),
   sigmaFallbackRse = 30,
-  omegaDf = NULL
+  omegaDf = NULL,
+  rseTheta = NULL,
+  rseOmega = NULL,
+  rseSigma = NULL,
+  covmatInput = NULL,
+  rawresInput = NULL,
+  offsetRawres = 1L,
+  inFilter = NULL
 ) {
   omegaFallback <- match.arg(omegaFallback)
 
@@ -99,6 +133,48 @@ runSIRControl <- function(
   }
   nlmixr2utils::.validateWorkers(workers)
 
+  for (nm in c("rseTheta", "rseOmega", "rseSigma")) {
+    v <- get(nm)
+    if (!is.null(v)) {
+      checkmate::assertNumeric(
+        v,
+        lower = .Machine$double.eps,
+        finite = TRUE,
+        any.missing = FALSE,
+        min.len = 1L,
+        .var.name = nm
+      )
+    }
+  }
+  sources <- c(
+    covmatInput = !is.null(covmatInput),
+    rseTheta = !is.null(rseTheta),
+    rawresInput = !is.null(rawresInput)
+  )
+  if (sum(sources) > 1L) {
+    cli::cli_abort(c(
+      "{.arg {names(sources)[sources]}} are alternative proposal sources; give only one.",
+      "i" = "Dispatch order when several are set would be ambiguous."
+    ))
+  }
+  checkmate::assertCount(offsetRawres)
+  if (!is.null(inFilter) && is.null(rawresInput)) {
+    cli::cli_warn(
+      "{.arg inFilter} has no effect without {.arg rawresInput}."
+    )
+  }
+  # PsN forbids rse_* together with inflation: the RSE already states the
+  # width, so inflating it on top makes the stated RSE a fiction.
+  inflated <- !all(
+    c(thetaInflation, omegaInflation, sigmaInflation) == 1
+  )
+  if (!is.null(rseTheta) && inflated) {
+    cli::cli_abort(c(
+      "Inflation cannot be combined with {.arg rseTheta}.",
+      "i" = "The RSE already specifies the proposal width; widen the RSE instead."
+    ))
+  }
+
   structure(
     list(
       thetaInflation = thetaInflation,
@@ -114,7 +190,14 @@ runSIRControl <- function(
       addIterations = addIterations,
       omegaFallback = omegaFallback,
       sigmaFallbackRse = sigmaFallbackRse,
-      omegaDf = omegaDf
+      omegaDf = omegaDf,
+      rseTheta = rseTheta,
+      rseOmega = rseOmega,
+      rseSigma = rseSigma,
+      covmatInput = covmatInput,
+      rawresInput = rawresInput,
+      offsetRawres = as.integer(offsetRawres),
+      inFilter = inFilter
     ),
     class = "runSIRControl"
   )

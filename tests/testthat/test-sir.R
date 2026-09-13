@@ -1260,26 +1260,10 @@ test_that("sirSummary attaches empirical covariance and correlation matrices", {
 
 # Step 10: runSIR --------------------------------------------------------------
 
-test_that(".sirAdjustedAttemptedSamples follows PsN carryover rule", {
-  skip_on_cran()
-  expect_equal(nlmixr2sir:::.sirAdjustedAttemptedSamples(100L), 100L)
-  expect_equal(
-    nlmixr2sir:::.sirAdjustedAttemptedSamples(
-      100L,
-      previousAttempted = 100L,
-      previousSuccessful = 95L
-    ),
-    100L
-  )
-  expect_equal(
-    nlmixr2sir:::.sirAdjustedAttemptedSamples(
-      100L,
-      previousAttempted = 100L,
-      previousSuccessful = 90L
-    ),
-    112L
-  )
-})
+# The sample-count adjustment is now checked against PsN's own oracle values
+# in test-sir-psn-parity.R. The test that stood here asserted 112 for a 10%
+# loss and no adjustment at exactly 0.95 turnout -- neither of which is what
+# PsN does -- so it was superseded rather than corrected.
 
 test_that("runSIR runs end-to-end and writes Step 10 artifacts", {
   skip_on_cran()

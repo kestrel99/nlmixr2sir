@@ -90,6 +90,7 @@ runSIR <- function(
 
   nSamples <- as.integer(nSamples)
   nResample <- as.integer(nResample)
+  ps <- .sirParamSpace(fit)
   run_dir <- nlmixr2utils::resolveRunDir(
     "sir",
     fitName,
@@ -137,15 +138,18 @@ runSIR <- function(
   } else {
     iter_numbers <- seq_along(nSamples)
     iter_index <- iter_numbers
-    mu <- .sirProposalMu(fit)
-    proposal_cov <- sirGetProposalCov(
-      fit,
-      thetaInflation = 1,
-      omegaInflation = 1,
-      sigmaInflation = 1,
-      capCorrelation = capCorrelation
-    )
-    boxcox_state <- NULL
+    initial <- .sirResolveInitialProposal(fit, ps, control)
+    proposal_cov <- initial$covMat
+    # The raw-results route derives its own centre and Box-Cox state from the
+    # supplied vectors, the way PsN's iteration 0 does; every other route
+    # centres on the fit's own estimates.
+    mu <- initial$mu %||% .sirProposalMu(fit, ps)
+    boxcox_state <- initial$boxcoxState
+    if (!identical(initial$source, "cov")) {
+      cli::cli_inform(
+        "Initial SIR proposal built from {.arg {initial$source}}, not {.code fit$cov}."
+      )
+    }
     iter_results <- list()
     iter_summary <- data.frame()
     prev_attempted <- NULL

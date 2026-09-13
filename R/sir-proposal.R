@@ -38,9 +38,6 @@ sirGetProposalCov <- function(
   capCorrelation = 0.8
 ) {
   checkmate::assertClass(fit, "nlmixr2FitCore")
-  checkmate::assertNumber(thetaInflation, lower = 0, finite = TRUE)
-  checkmate::assertNumber(omegaInflation, lower = 0, finite = TRUE)
-  checkmate::assertNumber(sigmaInflation, lower = 0, finite = TRUE)
   checkmate::assertNumber(capCorrelation, lower = 0, upper = 1, finite = TRUE)
 
   cov_mat <- fit$cov
@@ -61,15 +58,15 @@ sirGetProposalCov <- function(
     ))
   }
 
-  # One inflation factor per row/col, by parameter kind. Residual-error
-  # parameters get sigmaInflation: they used to fall into the theta branch,
-  # which made sigmaInflation unreachable.
-  inflation <- c(
-    theta = thetaInflation,
-    sigma = sigmaInflation,
-    omegaDiag = omegaInflation,
-    omegaOffdiag = omegaInflation
-  )[ps$kind[idx]]
+  # One inflation factor per row/col. Residual-error parameters get
+  # sigmaInflation: they used to fall into the theta branch, which made
+  # sigmaInflation unreachable.
+  inflation <- .sirInflationVector(
+    ps,
+    thetaInflation = thetaInflation,
+    omegaInflation = omegaInflation,
+    sigmaInflation = sigmaInflation
+  )[idx]
 
   # Preserve correlations: new SD_i = old SD_i * sqrt(inflation_i), which is
   # the same as scaling each entry by sqrt(inflation_i * inflation_j) and
@@ -200,9 +197,6 @@ sirGetProposalCov <- function(
   omegaFallback <- match.arg(omegaFallback)
   checkmate::assertNumeric(mu, finite = TRUE, any.missing = FALSE, min.len = 1L)
   checkmate::assertMatrix(proposalCov, mode = "numeric")
-  checkmate::assertNumber(thetaInflation, lower = 0, finite = TRUE)
-  checkmate::assertNumber(omegaInflation, lower = 0, finite = TRUE)
-  checkmate::assertNumber(sigmaInflation, lower = 0, finite = TRUE)
   checkmate::assertNumber(capCorrelation, lower = 0, upper = 1, finite = TRUE)
 
   fullNames <- ps$sirName
@@ -258,12 +252,12 @@ sirGetProposalCov <- function(
   # matrix, not just the fallback blocks: under covFull the proposal arrives
   # as one covariance and inflating only the fallback would silently drop
   # thetaInflation/omegaInflation entirely.
-  inflation <- c(
-    theta = thetaInflation,
-    sigma = sigmaInflation,
-    omegaDiag = omegaInflation,
-    omegaOffdiag = omegaInflation
-  )[ps$kind]
+  inflation <- .sirInflationVector(
+    ps,
+    thetaInflation = thetaInflation,
+    omegaInflation = omegaInflation,
+    sigmaInflation = sigmaInflation
+  )
   if (any(inflation != 1)) {
     # cov_ij * sqrt(infl_i * infl_j) is the same rescaling as
     # corr_ij * (sd_i sqrt(infl_i)) * (sd_j sqrt(infl_j)), but goes through no
@@ -472,3 +466,87 @@ sirGetProposalCov <- function(
 #' @return Named list with elements `resampledMat`, `newMu`, `newCov`,
 #'   `iterSummary`, `boxcoxState`, `rawResults`.
 #' @noRd
+
+# Per-parameter variance inflation factors, in SIR parameter order.
+#
+# Port of PsN setup_inflation() (lib/tool/sir.pm). Each of the three arguments
+# is either a single value applied to the whole class, or one value per
+# *diagonal* element of that class -- PsN's `inflate_only_diagonal = 1`
+# semantics. An OMEGA off-diagonal is never given a factor directly: it gets
+# `sqrt(infl_i) * sqrt(infl_j)` from the two diagonals it connects, which is
+# what leaves the correlation unchanged when the factors are equal.
+.sirInflationVector <- function(
+  ps,
+  thetaInflation = 1,
+  omegaInflation = 1,
+  sigmaInflation = 1
+) {
+  out <- stats::setNames(rep(1, nrow(ps)), ps$sirName)
+
+  .check <- function(given, label) {
+    checkmate::assertNumeric(
+      given,
+      lower = 0,
+      finite = TRUE,
+      any.missing = FALSE,
+      min.len = 1L,
+      .var.name = label
+    )
+  }
+
+  .fill <- function(kinds, given, label) {
+    diag_i <- which(ps$kind %in% kinds[["diag"]])
+    off_i <- which(ps$kind %in% kinds[["off"]])
+    .check(given, label)
+
+    if (length(diag_i) == 0L) {
+      if (length(given) != 1L || !isTRUE(all.equal(given[[1L]], 1))) {
+        cli::cli_abort(
+          "{.arg {label}} was given, but the model has no estimated {kinds[['what']]}."
+        )
+      }
+      return(invisible(NULL))
+    }
+    if (length(given) != 1L && length(given) != length(diag_i)) {
+      cli::cli_abort(c(
+        "{.arg {label}} must be length 1 or one value per {kinds[['what']]}.",
+        "i" = "The model has {length(diag_i)} estimated {kinds[['what']]}, but {length(given)} value{?s} {?was/were} given."
+      ))
+    }
+
+    if (length(given) == 1L) {
+      out[c(diag_i, off_i)] <<- given
+      return(invisible(NULL))
+    }
+
+    out[diag_i] <<- given
+    if (length(off_i) > 0L) {
+      # sqrt(infl_i) * sqrt(infl_j), keyed by eta index
+      byEta <- stats::setNames(given, as.character(ps$neta1[diag_i]))
+      out[off_i] <<- sqrt(byEta[as.character(ps$neta1[off_i])]) *
+        sqrt(byEta[as.character(ps$neta2[off_i])])
+    }
+    invisible(NULL)
+  }
+
+  .fill(
+    list(diag = "theta", off = character(0), what = "THETA"),
+    thetaInflation,
+    "thetaInflation"
+  )
+  .fill(
+    list(
+      diag = "sigma",
+      off = character(0),
+      what = "residual error parameters"
+    ),
+    sigmaInflation,
+    "sigmaInflation"
+  )
+  .fill(
+    list(diag = "omegaDiag", off = "omegaOffdiag", what = "OMEGA diagonals"),
+    omegaInflation,
+    "omegaInflation"
+  )
+  out
+}

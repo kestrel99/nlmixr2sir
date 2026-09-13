@@ -147,3 +147,19 @@ sirObj <- .sirLazy(local({
   attr(out, "outputDir") <- tempdir()
   out
 }))
+
+# A canonical raw-results file, produced by a tiny SIR run on theoFit(). Used
+# to exercise the rawresInput route, including the round trip from SIR's own
+# output back into a new run's proposal.
+sirRawResultsPath <- .sirLazy(local({
+  dir <- file.path(tempdir(), "sir_rawres_fixture")
+  set.seed(1)
+  suppressMessages(runSIR(
+    theoFit(),
+    nSamples = 12L,
+    nResample = 8L,
+    directory = dir,
+    control = runSIRControl(recover = FALSE, workers = 1L)
+  ))
+  file.path(dir, "raw_results.csv")
+}))
