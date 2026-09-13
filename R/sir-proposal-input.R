@@ -30,10 +30,13 @@
   out <- stats::setNames(rep(NA_real_, nrow(ps)), ps$sirName)
   perParam <- stats::setNames(rep(NA_real_, nrow(ps)), ps$sirName)
 
-  .fillClass <- function(kind, given, label, what) {
+  .fillClass <- function(kind, given, label, what, explicit) {
     idx <- which(ps$kind == kind)
     if (length(idx) == 0L) {
-      if (!is.null(given)) {
+      # Complain only about a value the caller actually supplied. A scalar
+      # rseTheta fills in rseOmega/rseSigma automatically, and it must not be
+      # an error for that fill-in to land on a class the model does not have.
+      if (!is.null(given) && isTRUE(explicit)) {
         cli::cli_abort(
           "{.arg {label}} was given, but the model has no estimated {what}."
         )
@@ -65,9 +68,21 @@
     invisible(NULL)
   }
 
-  .fillClass("theta", rse$theta, "rseTheta", "THETA")
-  .fillClass("sigma", rse$sigma, "rseSigma", "residual error parameters")
-  .fillClass("omegaDiag", rse$omega, "rseOmega", "OMEGA diagonals")
+  .fillClass("theta", rse$theta, "rseTheta", "THETA", TRUE)
+  .fillClass(
+    "sigma",
+    rse$sigma,
+    "rseSigma",
+    "residual error parameters",
+    rse$explicit[["sigma"]]
+  )
+  .fillClass(
+    "omegaDiag",
+    rse$omega,
+    "rseOmega",
+    "OMEGA diagonals",
+    rse$explicit[["omega"]]
+  )
 
   off <- which(ps$kind == "omegaOffdiag")
   if (length(off) > 0L) {
@@ -116,8 +131,14 @@
     ))
   }
   if (is.null(rseTheta)) {
-    return(list(theta = NULL, omega = NULL, sigma = NULL))
+    return(list(
+      theta = NULL,
+      omega = NULL,
+      sigma = NULL,
+      explicit = c(omega = FALSE, sigma = FALSE)
+    ))
   }
+  explicit <- c(omega = !is.null(rseOmega), sigma = !is.null(rseSigma))
   if (length(rseTheta) == 1L) {
     if (is.null(rseOmega)) {
       rseOmega <- rseTheta
@@ -126,7 +147,12 @@
       rseSigma <- rseTheta
     }
   }
-  list(theta = rseTheta, omega = rseOmega, sigma = rseSigma)
+  list(
+    theta = rseTheta,
+    omega = rseOmega,
+    sigma = rseSigma,
+    explicit = explicit
+  )
 }
 
 # Diagonal proposal covariance from RSE percentages.

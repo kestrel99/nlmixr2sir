@@ -1,6 +1,6 @@
 Package: nlmixr2sir
 Title: Sampling Importance Resampling for nlmixr2 Models
-Version: 0.2
+Version: 0.3
 Authors@R: c(
     person("Justin", "Wilkins", email = "justin.wilkins@occams.com", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0002-7099-9396"))

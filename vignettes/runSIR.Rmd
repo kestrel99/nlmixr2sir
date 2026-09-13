@@ -50,9 +50,10 @@ require no asymptotic assumption.
 
 ## Prerequisites
 
-`runSIR()` requires a fit with a successful covariance step — the initial proposal is
-derived from `fit$cov`.  If your fit was run without a covariance step, re-run with
-`covMethod = "r"` (or another appropriate method) before calling `runSIR()`.
+`runSIR()` uses `fit$cov` for the initial proposal when it is available, which is
+the usual case and the one this vignette follows.  A successful covariance step is
+*not* required: if your fit has none, see
+[Running without a covariance step](#running-without-a-covariance-step) below.
 
 SIR also requires at least two random effects (ETAs) so that a multivariate proposal
 can be constructed for the omega block.
@@ -207,7 +208,8 @@ round(attr(sir_summ, "corMatrix"), 4)
 
 ### 5. Diagnostic plots
 
-`plot()` returns a `ggplot2` object.  Three views are available:
+`plot()` returns a `ggplot2` object.  Six views are available; the convergence
+plot is the one to read first.
 
 #### Parameter distributions
 
@@ -236,6 +238,43 @@ samples indicates a poor proposal (too wide).
 
 ```{r plot-resample, fig.cap = "Resampling probabilities by iteration"}
 plot(sir_result, type = "resampling")
+```
+
+#### Convergence: dOFV against the reference chi-square
+
+The primary SIR diagnostic.  For each iteration it draws the empirical ΔOFV quantile
+curve for the proposal and for the SIR posterior, against a reference chi-square on
+the number of estimated parameters.  **Convergence reads as the SIR curve settling
+onto the reference.**
+
+If the first iteration's proposal curve falls *below* the reference for more than a
+quarter of the quantiles, the proposal is too narrow.  Resampling cannot recover from
+that — the samples needed simply were not drawn — so `runSIR()` warns and recommends
+restarting with inflation.
+
+```{r plot-convergence, fig.cap = "dOFV against the reference chi-square"}
+plot(sir_result, type = "convergence", nReplicate = 100L)
+```
+
+#### Confidence intervals by iteration
+
+Proposal and SIR intervals per parameter per iteration.  Use it to judge whether the
+uncertainty has stopped moving: if the last two iterations differ noticeably, the run
+has not settled.
+
+```{r plot-intervals, fig.cap = "Interval per parameter, by iteration"}
+plot(sir_result, type = "intervals")
+```
+
+#### RSE and correlation
+
+RSE% on the diagonal, correlations off it.  The diagonal is annotated by the
+confidence-interval asymmetry ratio `(high - median) / (median - low)`.  A symmetric
+normal-approximation covariance reports a single standard error per parameter and
+cannot express that asymmetry — showing it is a large part of why SIR is run.
+
+```{r plot-rsecor, fig.cap = "RSE and correlation, with CI asymmetry"}
+plot(sir_result, type = "rsecor")
 ```
 
 ---
@@ -283,6 +322,103 @@ SIR schedules, where many OFV evaluations can be spread across workers.
 
 Sequential evaluation (`workers = NULL` or `workers = 1`) does not require `future` or
 `future.apply`.
+
+Whenever `workers > 1`, `workers * rxThreads` must not exceed the machine's core
+count — each worker is a separate process running its own rxode2 thread pool, so
+oversubscribing slows the run down rather than speeding it up.
+
+```{r parallel, eval = FALSE}
+runSIR(
+  fit,
+  control = runSIRControl(workers = 4, rxThreads = 2)
+)
+```
+
+---
+
+## Running without a covariance step
+
+The case SIR is most wanted for is the one where the covariance step failed — and
+that is precisely the case where an asymptotic standard error is unavailable. A
+covariance step is not required.
+
+Suppose the fit has no `$cov`:
+
+```{r nocov-fit, message = FALSE, results = "hide"}
+fit_nocov <- nlmixr2utils::nlmixr2(
+  three_eta_one_cmt,
+  data = nlmixr2data::theo_sd,
+  est = "focei",
+  control = list(print = 0L, covMethod = "")
+)
+```
+
+```{r nocov-check}
+is.null(fit_nocov$cov)
+```
+
+There are three ways to give SIR a proposal anyway.
+
+### From relative standard errors
+
+State the uncertainty directly as RSE percentages. A scalar `rseTheta` is applied to
+OMEGA and residual error too; pass `rseOmega` and `rseSigma` to differentiate them,
+or pass a vector with one value per estimated element of a class.
+
+```{r nocov-rse, eval = FALSE}
+runSIR(
+  fit_nocov,
+  nSamples = c(16L, 16L),
+  nResample = c(8L, 8L),
+  control = runSIRControl(rseTheta = 30)
+)
+```
+
+Diagonal variances come out as `(rse * estimate / 100)^2`. OMEGA off-diagonals are
+derived from the two diagonals they connect. Inflation cannot be combined with this
+route — the RSE already states the width, so widening it on top would make the
+stated RSE a fiction; widen the RSE instead.
+
+### From a supplied covariance matrix
+
+Pass a matrix, a NONMEM-style `.cov` file, or the string `"identity"`. A named matrix
+may cover only some parameters; the rest are filled with zero and then made positive
+definite.
+
+```{r nocov-covmat, eval = FALSE}
+runSIR(
+  fit_nocov,
+  control = runSIRControl(covmatInput = "identity", thetaInflation = 0.05)
+)
+```
+
+`"identity"` together with inflation is the cheap "any diagonal proposal" route: the
+identity is almost certainly the wrong scale, so the inflation factor is doing the
+real work of setting the width.
+
+### From a raw-results file
+
+Seed the first proposal from parameter vectors that already exist — from an earlier
+SIR run, or from a bootstrap. The empirical mean and covariance of those vectors
+become the iteration-1 proposal, which is what PsN calls iteration 0.
+
+```{r nocov-rawres, eval = FALSE}
+runSIR(
+  fit_nocov,
+  control = runSIRControl(
+    rawresInput = "path/to/raw_results.csv",
+    offsetRawres = 1L,
+    inFilter = function(d) d$objf < 1000
+  )
+)
+```
+
+`offsetRawres` skips low-numbered samples — the default of `1` drops the reference
+row. `inFilter` narrows the rows further, and accepts either a plain R predicate as
+above or PsN's `.gt.` / `.lt.` / `.eq.` string syntax.
+
+These three are alternatives, not combinations: setting more than one is an error
+rather than a silent choice by precedence.
 
 ---
 

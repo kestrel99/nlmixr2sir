@@ -1,4 +1,4 @@
-# nlmixr2sir (development version)
+# nlmixr2sir 0.3
 
 * SIR now derives its parameter vector from a single internal description of the fit instead of re-deriving THETA, sigma, and OMEGA names independently in each function. This fixes `runSIR()` aborting with `Assertion on 'mu' failed: Contains missing values` against nlmixr2est 7, where `fit$cov` reports OMEGA alongside THETA and the old proposal mean came back `NA` for every OMEGA element.
 

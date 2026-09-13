@@ -4,3 +4,5 @@
 ^LICENSE$
 ^\.positai$
 ^\.claude$
+^PLAN\.md$
+^P[0-9]+-PROGRESS\.md$

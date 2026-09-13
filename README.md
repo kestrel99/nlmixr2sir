@@ -22,10 +22,12 @@ matrices, and diagnostic plots.
 `runSIR()` implements the SIR workflow for `nlmixr2` Where practical, it follows
 the same process as Perl-speaks-NONMEM.
 
-`nlmixr2sir` builds the initial proposal from `fit$cov`, with optional inflation and
-correlation capping. THETA, OMEGA, and sigma-like parameters are sampled, and 
-parameter-space constraints such as bounds and positive-definite OMEGA matrices are
-enforced.
+`nlmixr2sir` builds the initial proposal from `fit$cov` by default, with
+optional inflation and correlation capping, and can take it instead from
+relative standard errors, a supplied covariance matrix, or the parameter
+vectors in a raw-results file -- see *Requirements and Practical Notes*. THETA,
+OMEGA, and residual-error parameters are sampled, and parameter-space
+constraints such as bounds and positive-definite OMEGA matrices are enforced.
 
 Since `nlmixr2est` 7, `foceiControl(covFull = TRUE)` is the default and `fit$cov`
 covers THETA, residual error, and OMEGA together. `nlmixr2sir` uses that matrix
@@ -48,13 +50,14 @@ vector is reconstructed into an OMEGA matrix, and non-positive-definite draws
 are discarded. After each SIR iteration, the next proposal covariance is
 updated from the empirical covariance of the retained samples.
 
-Sampled vectors are re-evaluated by fixing parameters in the model and running
-Bayesian feedback (i.e. the model is evaluated aginst the data without any
-estimation being performed). Importance ratios are computed, weighted resampling
-is performed, and the proposal for the next iteration is updated.
+Sampled vectors are re-evaluated by fixing the population parameters and
+recomputing the objective function against the data, without any estimation
+being performed. Importance ratios are computed, weighted resampling is
+performed, and the proposal for the next iteration is updated.
 
-The SIR tool supports recentering, Box-Cox proposal updates, recovery from saved state,
-iteration summaries, and diagnostic plots.
+The SIR tool supports recentering, Box-Cox proposal updates, recovery from
+saved state, extending a finished run with further iterations, iteration
+summaries, and diagnostic plots.
 
 The package is designed to work alongside `nlmixr2utils`, which provides the
 shared worker-plan helpers and core infrastructure.
@@ -137,20 +140,97 @@ sir <- runSIR(
 )
 ```
 
+## Diagnostics
+
+```r
+plot(sir, type = "convergence")   # dOFV vs reference chi-square, per iteration
+plot(sir, type = "intervals")     # proposal vs SIR interval, per parameter
+plot(sir, type = "rsecor")        # RSE / correlation, with CI asymmetry
+plot(sir, type = "parameters")    # resampled parameter distributions
+```
+
+`type = "convergence"` is the primary diagnostic. For each iteration it draws
+the empirical dOFV quantile curve for the proposal and for the SIR posterior
+against a reference chi-square on the number of estimated parameters.
+Convergence reads as the SIR curve settling onto the reference. If the first
+iteration's proposal falls below the reference for more than a quarter of the
+quantiles, `runSIR()` warns: the proposal is too narrow, and resampling cannot
+recover from that -- restart with inflation.
+
+`type = "rsecor"` annotates each parameter's RSE with the confidence-interval
+asymmetry ratio `(high - median) / (median - low)`. A symmetric
+normal-approximation covariance reports one standard error per parameter and
+cannot express that asymmetry, which is a large part of why SIR is run at all.
+
+## Parity with PsN
+
+| PsN option | `nlmixr2sir` | Status |
+|---|---|---|
+| `-samples` | `nSamples` | supported |
+| `-resamples` | `nResample` | supported |
+| covariance matrix from the fit | default | supported |
+| `-rse_theta` / `-rse_omega` / `-rse_sigma` | `rseTheta` / `rseOmega` / `rseSigma` | supported |
+| `-covmat_input=<file>` / `=identity` | `covmatInput` | supported |
+| `-rawres_input` | `rawresInput` | supported |
+| `-offset_rawres` | `offsetRawres` | supported |
+| `-in_filter` | `inFilter` | supported |
+| `-theta_inflation` etc., scalar or vector | `thetaInflation` etc. | supported |
+| `-inflate_only_diagonal` semantics | always applied | supported |
+| `-recenter` | `recenter` | supported |
+| `-boxcox` | `boxcox` | supported |
+| `-cap_resampling` | `capResampling` | supported |
+| `-cap_correlation` | `capCorrelation` | supported |
+| `-add_iterations` | `addIterations` | supported |
+| sample / resample count adjustment | automatic | supported, oracle-tested |
+| dOFV vs chi-square plot | `plot(type = "convergence")` | supported |
+| CI-by-iteration plot | `plot(type = "intervals")` | supported |
+| RSE / correlation plot | `plot(type = "rsecor")` | supported |
+| `empirical_statistics()` output | `sirSummary()` | supported |
+| `<model>_sir.cov` | `<fitName>_sir.cov` | supported |
+| `-auto_rawres` | — | not implemented |
+| `-print_iter` | — | not implemented |
+| `-fast_posdef_checks` | — | not implemented |
+| `rplots_level = 2` extras | — | not implemented |
+| `-mceta`, `-copy_data`, `-problems_per_file`, `-nm_version` | — | not applicable (NONMEM execution) |
+
+Numeric parity for the sample/resample adjustment, the inflation vector and
+the RSE-to-variance conversion is checked against oracle values taken from
+PsN's own unit tests.
+
+Two deliberate differences. `sirSummary()` reports `rse` as a **percentage**
+where PsN reports a fraction. And `rse_sd_scale` halves the RSE of OMEGA
+elements only: PsN halves everything that is not a NONMEM THETA, which catches
+`$SIGMA` because NONMEM parameterises residual error as a variance, whereas
+nlmixr2 parameterises it on the standard-deviation scale already.
+
 ## Requirements and Practical Notes
 
-`runSIR()` expects a fit with a successful covariance step because the initial
-proposal is derived from `fit$cov`.
+`runSIR()` no longer requires a successful covariance step. When `fit$cov` is
+unavailable, supply the proposal another way:
+
+```r
+# from relative standard errors
+runSIR(fit, control = runSIRControl(rseTheta = 30))
+
+# from a diagonal proposal, widened by inflation
+runSIR(fit, control = runSIRControl(covmatInput = "identity",
+                                    thetaInflation = 0.05))
+
+# seeded from the parameter vectors in a raw-results file
+runSIR(fit, control = runSIRControl(rawresInput = "raw_results.csv"))
+```
 
 For practical use:
 
-* Use a model with a successful covariance step before calling `runSIR()`.
 * Use larger production schedules than toy examples; the default PsN-style
   schedule is usually a good starting point.
-* Review the dOFV and resampling diagnostics to make sure the proposal is not
-  too narrow or too wide.
-* Use `workers` to parallelize OFV evaluation when runs are large enough to
-  justify it.
+* Review the convergence diagnostic to make sure the proposal is not too
+  narrow or too wide.
+* Use `workers` and `rxThreads` to parallelize OFV evaluation when runs are
+  large enough to justify it. Whenever `workers > 1`, `workers * rxThreads`
+  must not exceed the machine's core count.
+* `nlmixr2est::setCov(fit, "sir")` switches the fit's reported uncertainty to
+  the SIR result after a run.
 
 ## Acknowledgments
 
