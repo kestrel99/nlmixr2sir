@@ -83,6 +83,12 @@ sirGetProposalCov <- function(
 
 # Fallback uncertainty for parameters `fit$cov` does not carry.
 #
+# nlmixr2sse has its own OMEGA-draw machinery (per-block inverse-Wishart and
+# a log-Cholesky joint draw). Promoting a shared implementation to
+# nlmixr2utils was considered and declined for now (PLAN.md 8.2): the cost
+# would land in two packages that have users, for two callers. Revisit if a
+# third caller appears.
+#
 # Reached only when the covariance step failed, `covMethod = ""`, or the user
 # asks for `omegaFallback = "wishart"`. Under nlmixr2est 7 defaults `fit$cov`
 # carries OMEGA and none of this is used.

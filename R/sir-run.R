@@ -241,6 +241,8 @@ runSIR <- function(
     row.names = FALSE
   )
   .sirWriteCovMatrices(summary_df, output_dir, fitName = fitName)
+  # Make the SIR uncertainty selectable with nlmixr2est::setCov(fit, "sir").
+  .sirRegisterCov(fit, summary_df, ps)
   raw_results <- .sirCanonicalRawResults(fit, fitName, final_iter$resampledMat)
   nlmixr2utils::writeRawResults(raw_results, output_dir)
 

@@ -10,6 +10,10 @@
 
 * `runSIR()` now takes its run settings through `control = runSIRControl()` rather than as flat arguments, cutting its signature from 21 arguments to 6. Passing a setting directly to `runSIR()` is an error naming `runSIRControl()`.
 
+* `runSIR()` registers its empirical covariance with the fit, so `nlmixr2est::setCov(fit, "sir")` switches the fit's reported uncertainty to the SIR result. Registration is skipped, with a message, if the parameters do not match `fit$cov` exactly or the covariance is not positive definite.
+
+* `runSIRControl()` objects deparse back into reproducible source through `rxode2::rxUiDeparse()`, emitting only the arguments that differ from the defaults.
+
 * `plot()` gains three diagnostics. `type = "convergence"` is the dOFV-versus-chi-square plot: per iteration, the empirical dOFV quantile curve for the proposal and for the SIR posterior against a reference chi-square on the number of estimated parameters, with a resampling-noise band on the last two iterations. Convergence reads as the SIR curve settling onto the reference, and a proposal that falls below the reference for more than a quarter of the quantiles now warns and recommends inflation. `type = "intervals"` compares the proposal and SIR interval per parameter per iteration. `type = "rsecor"` draws the RSE/correlation matrix with the diagonal annotated by the confidence-interval asymmetry ratio, which a symmetric normal approximation cannot show.
 
 * `sirSummary()` now matches PsN's output: it adds `mean` alongside the median, reports PsN's percentile set (2.5, 5, 10, 30, 50, 70, 90, 95, 97.5, from prediction intervals 0/40/80/90/95) in place of the previous set, and adds `rse_sd_scale`. Note `p25` and `p75` are no longer reported. `rse` remains a percentage where PsN reports a fraction, and the returned object now records that in an `rseUnits` attribute.

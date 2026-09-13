@@ -217,3 +217,16 @@ print.runSIRControl <- function(x, ...) {
 }
 
 `%||%` <- function(x, y) if (is.null(x)) y else x
+
+# rxode2::rxUiDeparse() turns an object stored in a model UI's `meta`
+# environment back into reproducible source, emitting only the arguments that
+# differ from the defaults. .deparseFinal() builds the call as
+# paste0(var, " <- ", class(object), "(...)"), taking the *class name* as the
+# constructor name -- which is why this object's class is `runSIRControl` and
+# not a package-prefixed variant.
+#' @exportS3Method rxode2::rxUiDeparse
+rxUiDeparse.runSIRControl <- function(object, var) {
+  .default <- runSIRControl()
+  .w <- nlmixr2est::.deparseDifferent(.default, object, "genRxControl")
+  nlmixr2est::.deparseFinal(.default, object, .w, var)
+}

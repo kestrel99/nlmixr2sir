@@ -3,6 +3,7 @@
 S3method(plot,nlmixr2SIR)
 S3method(print,nlmixr2SIR)
 S3method(print,runSIRControl)
+S3method(rxode2::rxUiDeparse,runSIRControl)
 export(runSIR)
 export(runSIRControl)
 export(sirSummary)
