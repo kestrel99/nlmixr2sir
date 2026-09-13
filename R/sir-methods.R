@@ -101,7 +101,23 @@ print.nlmixr2SIR <- function(x, ..., digits = 3) {
 #'
 #' @param x An object returned by [runSIR()].
 #' @param y Unused; included for S3 compatibility.
-#' @param type Plot type: `"parameters"`, `"dofv"`, or `"resampling"`.
+#' @param type Plot type. `"parameters"` shows resampled parameter
+#'   distributions, `"dofv"` and `"resampling"` are per-sample diagnostics,
+#'   `"intervals"` compares the proposal and SIR interval for each parameter
+#'   at each iteration -- showing whether the uncertainty has stopped moving --
+#'   `"rsecor"` is the RSE/correlation matrix with the diagonal annotated by
+#'   CI asymmetry, and `"convergence"` is the dOFV-versus-chi-square plot: per iteration,
+#'   the empirical dOFV quantile curve for the proposal and for the SIR
+#'   posterior against a reference chi-square on the number of estimated
+#'   parameters. Convergence reads as the SIR curve settling onto the
+#'   reference.
+#' @param noise Logical. Draw a resampling-noise band on the last two
+#'   iterations of the convergence plot.
+#' @param nReplicate Number of resampling replicates behind that band.
+#' @param ci Interval width, as a percentage, for `type = "intervals"` and for
+#'   the asymmetry annotation on `type = "rsecor"`.
+#' @param which For `type = "rsecor"`, whether to show the final SIR posterior
+#'   (`"SIR"`, the default) or the first iteration's proposal.
 #' @param bins Number of histogram bins for parameter and dOFV plots.
 #' @param ... Unused.
 #' @return A `ggplot` object.
@@ -111,11 +127,33 @@ plot.nlmixr2SIR <- function(
   x,
   y,
   ...,
-  type = c("parameters", "dofv", "resampling"),
-  bins = 30
+  type = c(
+    "parameters",
+    "dofv",
+    "resampling",
+    "convergence",
+    "intervals",
+    "rsecor"
+  ),
+  bins = 30,
+  noise = TRUE,
+  nReplicate = 500L,
+  ci = 95,
+  which = c("SIR", "proposal")
 ) {
   type <- match.arg(type)
+  which <- match.arg(which)
   checkmate::assertCount(bins, positive = TRUE)
+
+  if (type == "convergence") {
+    return(.sirConvergencePlot(x, noise = noise, nReplicate = nReplicate))
+  }
+  if (type == "intervals") {
+    return(.sirIntervalPlot(x, ci = ci))
+  }
+  if (type == "rsecor") {
+    return(.sirRseCorPlot(x, which = which, ci = ci))
+  }
 
   if (type == "parameters") {
     plot_df <- .sirParameterPlotData(x)

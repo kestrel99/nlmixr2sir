@@ -1201,18 +1201,23 @@ test_that("sirSummary returns final SIR summary statistics", {
   skip_on_cran()
   s <- sirSummary(iter1()$resampledMat, theoFit())
   expect_s3_class(s, "data.frame")
+  # PsN's percentile set, from prediction intervals 0, 40, 80, 90, 95.
   expect_named(
     s,
     c(
       "param",
       "estimate",
+      "mean",
       "sd",
       "rse",
+      "rse_sd_scale",
       "p2.5",
       "p5",
-      "p25",
+      "p10",
+      "p30",
       "p50",
-      "p75",
+      "p70",
+      "p90",
       "p95",
       "p97.5"
     )

@@ -85,9 +85,21 @@
 #'   row per vector and one column per parameter.
 #' @param fit An nlmixr2 fit object used to obtain reference parameter
 #'   estimates.
-#' @return A data frame with columns `param`, `estimate`, `sd`, `rse`, `p2.5`,
-#'   `p5`, `p25`, `p50`, `p75`, `p95`, and `p97.5`. Attributes `covMatrix`
-#'   and `corMatrix` contain empirical covariance and correlation matrices.
+#' @return A data frame with columns `param`, `estimate`, `mean`, `sd`, `rse`,
+#'   `rse_sd_scale`, and the percentiles `p2.5`, `p5`, `p10`, `p30`, `p50`,
+#'   `p70`, `p90`, `p95`, `p97.5`. The percentile set is PsN's, derived from
+#'   prediction intervals 0, 40, 80, 90 and 95.
+#'
+#'   `rse` is a **percentage**; PsN reports the same quantity as a fraction.
+#'   `rse_sd_scale` is `rse / 2`, the RSE of a variance expressed on the
+#'   standard-deviation scale, and is `NA` for parameters that are not
+#'   variances. Note this differs from PsN, which halves everything that is
+#'   not a NONMEM THETA: nlmixr2 parameterises residual error on the SD scale
+#'   already, so halving `add.sd` would rescale a quantity that needs no
+#'   rescaling.
+#'
+#'   Attributes `covMatrix`, `corMatrix` and `sdCorMatrix` hold the empirical
+#'   covariance, correlation, and standard-deviation/correlation matrices.
 #' @export
 sirSummary <- function(resampledMat, fit) {
   if (is.data.frame(resampledMat)) {
@@ -101,7 +113,10 @@ sirSummary <- function(resampledMat, fit) {
 
   param_names <- colnames(resampledMat)
   estimate <- .sirOriginalEstimates(fit, param_names)
-  probs <- c(0.025, 0.05, 0.25, 0.5, 0.75, 0.95, 0.975)
+
+  # PsN's percentile set, derived from prediction intervals 0, 40, 80, 90, 95:
+  # 2.5, 5, 10, 30, 50, 70, 90, 95, 97.5.
+  probs <- .sirPercentileProbs()
   qmat <- t(apply(
     resampledMat,
     2L,
@@ -110,18 +125,34 @@ sirSummary <- function(resampledMat, fit) {
     na.rm = TRUE,
     names = FALSE
   ))
-  colnames(qmat) <- c("p2.5", "p5", "p25", "p50", "p75", "p95", "p97.5")
+  colnames(qmat) <- paste0("p", .sirPercentileLabels())
+
+  mean_vals <- colMeans(resampledMat, na.rm = TRUE)
   sd_vals <- apply(resampledMat, 2L, stats::sd, na.rm = TRUE)
   rse <- ifelse(
     is.finite(estimate) & estimate != 0,
     sd_vals / abs(estimate) * 100,
     NA_real_
   )
+
+  # RSE expressed on the standard-deviation scale, for parameters estimated as
+  # variances. PsN halves the RSE for everything that is not a NONMEM THETA.
+  # That rule cannot be carried over literally: nlmixr2 parameterises residual
+  # error on the SD scale already (add.sd is a standard deviation, not a
+  # variance), so halving it would understate a quantity that needs no
+  # rescaling. Only OMEGA elements are halved here.
+  ps <- .sirParamSpace(fit)
+  kind <- ps$kind[match(param_names, ps$sirName)]
+  onVarianceScale <- !is.na(kind) & kind %in% c("omegaDiag", "omegaOffdiag")
+  rse_sd_scale <- ifelse(onVarianceScale, rse / 2, NA_real_)
+
   out <- data.frame(
     param = param_names,
     estimate = unname(estimate),
+    mean = unname(mean_vals),
     sd = unname(sd_vals),
     rse = unname(rse),
+    rse_sd_scale = unname(rse_sd_scale),
     qmat,
     row.names = NULL,
     check.names = FALSE
@@ -129,24 +160,109 @@ sirSummary <- function(resampledMat, fit) {
   structure(
     out,
     covMatrix = stats::cov(resampledMat),
-    corMatrix = stats::cor(resampledMat)
+    corMatrix = stats::cor(resampledMat),
+    sdCorMatrix = .sirSdCorMatrix(resampledMat),
+    rseUnits = "percent"
   )
+}
+
+# PsN reports percentiles derived from a set of prediction intervals rather
+# than a flat list: interval 0 contributes the median, and each other interval
+# pi contributes the pair (100 - pi)/2 and 100 - (100 - pi)/2.
+.sirPercentileLabels <- function(predictionIntervals = c(0, 40, 80, 90, 95)) {
+  out <- unlist(lapply(sort(predictionIntervals), function(pi) {
+    if (pi == 0) {
+      return(50)
+    }
+    c((100 - pi) / 2, 100 - (100 - pi) / 2)
+  }))
+  sort(unique(out))
+}
+
+.sirPercentileProbs <- function(predictionIntervals = c(0, 40, 80, 90, 95)) {
+  .sirPercentileLabels(predictionIntervals) / 100
+}
+
+# Standard deviations on the diagonal, correlations off it -- PsN's sdcorr
+# form, and what the RSE/correlation diagnostic plot reads.
+.sirSdCorMatrix <- function(resampledMat) {
+  cm <- stats::cov(resampledMat)
+  out <- stats::cov2cor(cm)
+  diag(out) <- sqrt(diag(cm))
+  out
 }
 
 .sirSummarizeResamples <- function(resampledMat, fit) {
   sirSummary(resampledMat, fit)
 }
 
+# PsN's summary_iterations.csv column names, so a PsN-literate reader and any
+# downstream tooling can read either file. The nlmixr2sir-specific columns
+# (rejection counts, mean dOFV) are kept and appended after them.
+.sirPsnIterationColumns <- function() {
+  c(
+    iter = "iteration",
+    nSamples = "commandline.samples",
+    nAttempted = "attempted.samples",
+    nSuccessful = "successful.samples",
+    nResample = "commandline.resamples",
+    nResampled = "actual.resamples",
+    requested_sample_resample_ratio = "requested.ratio",
+    actual_sample_resample_ratio = "actual.ratio",
+    nNegativeDOFV = "negative.dOFV",
+    minDOFV = "minimum.sample.ofv"
+  )
+}
+
 .sirWriteIterationSummary <- function(iterSummary, directory) {
   out <- iterSummary
   out$requested_sample_resample_ratio <- out$nSamples / out$nResample
   out$actual_sample_resample_ratio <- out$nSuccessful / out$nResampled
+
+  map <- .sirPsnIterationColumns()
+  psn <- intersect(names(map), names(out))
+  rest <- setdiff(names(out), psn)
+  out <- out[, c(psn, rest), drop = FALSE]
+  names(out)[seq_along(psn)] <- unname(map[psn])
+
   utils::write.csv(
     out,
     file.path(directory, "summary_iterations.csv"),
     row.names = FALSE
   )
   invisible(out)
+}
+
+# PsN writes the empirical covariance of the final resampled vectors as
+# <model>_sir.cov, and the sd/correlation form alongside it. Both were
+# previously attached to the result as attributes only.
+.sirWriteCovMatrices <- function(summary, directory, fitName = "sir") {
+  cov_mat <- attr(summary, "covMatrix", exact = TRUE)
+  if (is.null(cov_mat)) {
+    return(invisible(NULL))
+  }
+  sdcor <- attr(summary, "sdCorMatrix", exact = TRUE)
+
+  .write <- function(m, path) {
+    df <- data.frame(NAME = rownames(m), m, check.names = FALSE)
+    utils::write.table(
+      df,
+      path,
+      row.names = FALSE,
+      quote = FALSE,
+      sep = "	"
+    )
+    path
+  }
+
+  written <- .write(cov_mat, file.path(directory, paste0(fitName, "_sir.cov")))
+  if (!is.null(sdcor)) {
+    written <- c(
+      written,
+      .write(sdcor, file.path(directory, paste0(fitName, "_sir.sdcorr")))
+    )
+  }
+  invisible(written)
 }
 
 .sirWriteRejectionSummary <- function(iterSummary, directory) {

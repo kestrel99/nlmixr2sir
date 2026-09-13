@@ -14,9 +14,21 @@ row per vector and one column per parameter.}
 estimates.}
 }
 \value{
-A data frame with columns \code{param}, \code{estimate}, \code{sd}, \code{rse}, \code{p2.5},
-\code{p5}, \code{p25}, \code{p50}, \code{p75}, \code{p95}, and \code{p97.5}. Attributes \code{covMatrix}
-and \code{corMatrix} contain empirical covariance and correlation matrices.
+A data frame with columns \code{param}, \code{estimate}, \code{mean}, \code{sd}, \code{rse},
+\code{rse_sd_scale}, and the percentiles \code{p2.5}, \code{p5}, \code{p10}, \code{p30}, \code{p50},
+\code{p70}, \code{p90}, \code{p95}, \code{p97.5}. The percentile set is PsN's, derived from
+prediction intervals 0, 40, 80, 90 and 95.
+
+\code{rse} is a \strong{percentage}; PsN reports the same quantity as a fraction.
+\code{rse_sd_scale} is \code{rse / 2}, the RSE of a variance expressed on the
+standard-deviation scale, and is \code{NA} for parameters that are not
+variances. Note this differs from PsN, which halves everything that is
+not a NONMEM THETA: nlmixr2 parameterises residual error on the SD scale
+already, so halving \code{add.sd} would rescale a quantity that needs no
+rescaling.
+
+Attributes \code{covMatrix}, \code{corMatrix} and \code{sdCorMatrix} hold the empirical
+covariance, correlation, and standard-deviation/correlation matrices.
 }
 \description{
 \code{sirSummary()} computes empirical summary statistics from final SIR

@@ -234,11 +234,13 @@ runSIR <- function(
   summary_df <- sirSummary(final_iter$resampledMat, fit)
   cov_mat <- attr(summary_df, "covMatrix")
   cor_mat <- attr(summary_df, "corMatrix")
+  sdcor_mat <- attr(summary_df, "sdCorMatrix")
   utils::write.csv(
     summary_df,
     file.path(output_dir, "sir_results.csv"),
     row.names = FALSE
   )
+  .sirWriteCovMatrices(summary_df, output_dir, fitName = fitName)
   raw_results <- .sirCanonicalRawResults(fit, fitName, final_iter$resampledMat)
   nlmixr2utils::writeRawResults(raw_results, output_dir)
 
@@ -248,6 +250,7 @@ runSIR <- function(
   attr(summary_df, "resampledMat") <- final_iter$resampledMat
   attr(summary_df, "covMatrix") <- cov_mat
   attr(summary_df, "corMatrix") <- cor_mat
+  attr(summary_df, "sdCorMatrix") <- sdcor_mat
   attr(summary_df, "outputDir") <- output_dir
   attr(summary_df, "fitName") <- fitName
   attr(summary_df, "rawResults") <- raw_results

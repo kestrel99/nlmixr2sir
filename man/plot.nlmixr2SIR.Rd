@@ -4,7 +4,17 @@
 \alias{plot.nlmixr2SIR}
 \title{Plot an SIR result}
 \usage{
-\method{plot}{nlmixr2SIR}(x, y, ..., type = c("parameters", "dofv", "resampling"), bins = 30)
+\method{plot}{nlmixr2SIR}(
+  x,
+  y,
+  ...,
+  type = c("parameters", "dofv", "resampling", "convergence", "intervals", "rsecor"),
+  bins = 30,
+  noise = TRUE,
+  nReplicate = 500L,
+  ci = 95,
+  which = c("SIR", "proposal")
+)
 }
 \arguments{
 \item{x}{An object returned by \code{\link[=runSIR]{runSIR()}}.}
@@ -13,9 +23,29 @@
 
 \item{...}{Unused.}
 
-\item{type}{Plot type: \code{"parameters"}, \code{"dofv"}, or \code{"resampling"}.}
+\item{type}{Plot type. \code{"parameters"} shows resampled parameter
+distributions, \code{"dofv"} and \code{"resampling"} are per-sample diagnostics,
+\code{"intervals"} compares the proposal and SIR interval for each parameter
+at each iteration -- showing whether the uncertainty has stopped moving --
+\code{"rsecor"} is the RSE/correlation matrix with the diagonal annotated by
+CI asymmetry, and \code{"convergence"} is the dOFV-versus-chi-square plot: per iteration,
+the empirical dOFV quantile curve for the proposal and for the SIR
+posterior against a reference chi-square on the number of estimated
+parameters. Convergence reads as the SIR curve settling onto the
+reference.}
 
 \item{bins}{Number of histogram bins for parameter and dOFV plots.}
+
+\item{noise}{Logical. Draw a resampling-noise band on the last two
+iterations of the convergence plot.}
+
+\item{nReplicate}{Number of resampling replicates behind that band.}
+
+\item{ci}{Interval width, as a percentage, for \code{type = "intervals"} and for
+the asymmetry annotation on \code{type = "rsecor"}.}
+
+\item{which}{For \code{type = "rsecor"}, whether to show the final SIR posterior
+(\code{"SIR"}, the default) or the first iteration's proposal.}
 }
 \value{
 A \code{ggplot} object.

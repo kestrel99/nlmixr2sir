@@ -10,6 +10,12 @@
 
 * `runSIR()` now takes its run settings through `control = runSIRControl()` rather than as flat arguments, cutting its signature from 21 arguments to 6. Passing a setting directly to `runSIR()` is an error naming `runSIRControl()`.
 
+* `plot()` gains three diagnostics. `type = "convergence"` is the dOFV-versus-chi-square plot: per iteration, the empirical dOFV quantile curve for the proposal and for the SIR posterior against a reference chi-square on the number of estimated parameters, with a resampling-noise band on the last two iterations. Convergence reads as the SIR curve settling onto the reference, and a proposal that falls below the reference for more than a quarter of the quantiles now warns and recommends inflation. `type = "intervals"` compares the proposal and SIR interval per parameter per iteration. `type = "rsecor"` draws the RSE/correlation matrix with the diagonal annotated by the confidence-interval asymmetry ratio, which a symmetric normal approximation cannot show.
+
+* `sirSummary()` now matches PsN's output: it adds `mean` alongside the median, reports PsN's percentile set (2.5, 5, 10, 30, 50, 70, 90, 95, 97.5, from prediction intervals 0/40/80/90/95) in place of the previous set, and adds `rse_sd_scale`. Note `p25` and `p75` are no longer reported. `rse` remains a percentage where PsN reports a fraction, and the returned object now records that in an `rseUnits` attribute.
+
+* `runSIR()` writes `<fitName>_sir.cov` and `<fitName>_sir.sdcorr`, and `summary_iterations.csv` now leads with PsN's column names so either file can be read by PsN-literate tooling.
+
 * `runSIR()` no longer requires a successful covariance step. `runSIRControl()` gains three alternative proposal sources, following PsN: `rseTheta`/`rseOmega`/`rseSigma` build a diagonal proposal from relative standard errors, `covmatInput` takes a covariance matrix, a NONMEM-style `.cov` file, or `"identity"`, and `rawresInput` seeds the first proposal from the parameter vectors in a canonical raw-results file (with `offsetRawres` and `inFilter`). These exist for the models whose covariance step fails, which is where SIR is most wanted.
 
 * `runSIRControl()` inflation arguments accept a vector as well as a scalar: one value per estimated THETA, OMEGA diagonal, or residual-error parameter. OMEGA off-diagonals derive `sqrt(infl_i) * sqrt(infl_j)` from the two diagonals they connect, as PsN does.
