@@ -39,8 +39,11 @@ vignettes/*.pdf
 # R Environment Variables
 .Renviron
 
-# pkgdown site
-docs/
+# pkgdown site output, but not the hand-written technical reference.
+# Note docs/* rather than docs/: git will not descend into an excluded
+# directory, so a negation under docs/ would never be reached.
+docs/*
+!docs/sir-technical-reference.md
 
 # translation temp files
 po/*~

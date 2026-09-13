@@ -248,6 +248,11 @@ et al](https://link.springer.com/article/10.1007/s10928-016-9487-8). The technic
 For a fuller worked example, see the package vignette:
 `vignette("runSIR", package = "nlmixr2sir")`.
 
+For a specification of the implementation -- the proposal sources, the
+importance-ratio and resampling maths, the Box-Cox proposal update, the
+diagnostics, and every deliberate difference from PsN -- see
+[`docs/sir-technical-reference.md`](docs/sir-technical-reference.md).
+
 ## Credit where it's due
 
 `nlmixr2sir` is based on the [PsN implementation](https://github.com/UUPharmacometrics/PsN/releases/download/v5.7.0/sir_userguide.pdf) written by Lars Lindbom, 
