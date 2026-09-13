@@ -18,10 +18,13 @@ Imports:
     checkmate,
     cli (>= 3.4.0),
     ggplot2,
+    lotri,
     mvtnorm,
-    nlmixr2est (>= 5.0.0),
-    nlmixr2utils (>= 0.2),
-    rxode2
+    nlmixr2est (>= 7.0.0),
+    nlmixr2utils (>= 0.3),
+    rxode2 (>= 5.0.0),
+    stats,
+    utils
 Suggests:
     future,
     future.apply,
@@ -33,4 +36,4 @@ VignetteBuilder: knitr
 Config/testthat/edition: 3
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.3
+Config/roxygen2/version: 8.1.0

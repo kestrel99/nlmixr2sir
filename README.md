@@ -27,21 +27,26 @@ correlation capping. THETA, OMEGA, and sigma-like parameters are sampled, and
 parameter-space constraints such as bounds and positive-definite OMEGA matrices are
 enforced.
 
-Because `nlmixr2` does not currently report standard errors for OMEGA elements,
-`nlmixr2sir` initializes OMEGA uncertainty separately from `fit$omega` instead
-of reading it from `fit$cov` or `fit$parFixedDf`. The package takes the free
-lower-triangular OMEGA elements, applies a Wishart-style fallback
-(`omegaFallback = "wishart"`), and uses that to approximate an SE for each
-sampled OMEGA element. By default the fallback uses `omegaDf = nSubjects - 1`,
-so diagonal OMEGA elements use `sqrt(2 * omega^2 / df)` and off-diagonal
-elements use `sqrt((omega[i, i] * omega[j, j] + omega[i, j]^2) / df)`.
+Since `nlmixr2est` 7, `foceiControl(covFull = TRUE)` is the default and `fit$cov`
+covers THETA, residual error, and OMEGA together. `nlmixr2sir` uses that matrix
+directly (`omegaFallback = "cov"`, the default), which means the initial
+proposal carries the **correlations between THETA and OMEGA** rather than
+treating the two as independent blocks.
 
-Those fallback SEs define the initial OMEGA proposal block, with only the free
-lower-triangular elements sampled directly. Each proposed vector is then
-reconstructed into an OMEGA matrix, and non-positive-definite draws are
-discarded. After each SIR iteration, the next proposal covariance is updated
-from the empirical covariance of the retained samples, so later iterations are
-not limited to the initial diagonal OMEGA approximation.
+When `fit$cov` does not carry OMEGA -- a fit run with `covFull = FALSE`, a
+failed covariance step, or `covMethod = ""` -- `nlmixr2sir` falls back
+automatically to a Wishart-style approximation, and `omegaFallback = "wishart"`
+forces it. The fallback takes the free lower-triangular OMEGA elements and, with
+`omegaDf = nSubjects - 1` by default, approximates diagonal SEs as
+`sqrt(2 * omega^2 / df)` and off-diagonal SEs as
+`sqrt((omega[i, i] * omega[j, j] + omega[i, j]^2) / df)`. That route gives a
+block-diagonal proposal, so it discards the THETA-OMEGA correlations the
+default route keeps. The route actually taken is reported in the run log.
+
+Only the free lower-triangular elements are sampled directly. Each proposed
+vector is reconstructed into an OMEGA matrix, and non-positive-definite draws
+are discarded. After each SIR iteration, the next proposal covariance is
+updated from the empirical covariance of the retained samples.
 
 Sampled vectors are re-evaluated by fixing parameters in the model and running
 Bayesian feedback (i.e. the model is evaluated aginst the data without any
@@ -115,6 +120,21 @@ sir <- runSIR(
 
 print(sir)
 plot(sir, type = "parameters")
+```
+
+Everything that tunes *how* the run behaves lives in `runSIRControl()`:
+
+```r
+sir <- runSIR(
+  fit,
+  nSamples = c(1000L, 1000L, 1000L, 2000L, 2000L),
+  nResample = c(200L, 400L, 500L, 1000L, 1000L),
+  control = runSIRControl(
+    thetaInflation = 2,
+    workers = 4,
+    rxThreads = 2
+  )
+)
 ```
 
 ## Requirements and Practical Notes

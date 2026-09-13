@@ -1,68 +1,63 @@
-skip_on_cran()
-
-# Shared fit: one-compartment model on theo_sd with covariance step.
-# Created once; reused across all Step 1 tests.
-.theo_one_cmt <- function() {
-  ini({
-    tka <- log(1.57)
-    tcl <- log(2.72)
-    tv <- log(31.5)
-    eta.ka ~ 0.6
-    add.sd <- 0.7 # nolint: object_usage_linter.
-  })
-  model({
-    ka <- exp(tka + eta.ka) # nolint: object_usage_linter.
-    cl <- exp(tcl) # nolint: object_usage_linter.
-    v <- exp(tv) # nolint: object_usage_linter.
-    cp <- linCmt() # nolint: object_usage_linter.
-    cp ~ add(add.sd)
-  })
-}
-
-.theo_fit <- suppressMessages(
-  nlmixr2utils::nlmixr2(
-    .theo_one_cmt,
-    nlmixr2data::theo_sd,
-    est = "focei",
-    control = list(print = 0L, covMethod = "r")
-  )
-)
-
 # Step 1: sirGetProposalCov ----------------------------------------------------
 
-test_that("sirGetProposalCov returns covariance close to fit$cov with defaults", {
-  result <- sirGetProposalCov(.theo_fit)
-  expect_equal(result, .theo_fit$cov, tolerance = 1e-10)
+test_that("sirGetProposalCov returns fit$cov values under SIR names", {
+  skip_on_cran()
+  result <- sirGetProposalCov(theoFit())
+  ps <- .sirParamSpace(theoFit())
+  expect_equal(unname(result), unname(theoFit()$cov), tolerance = 1e-10)
+  expect_equal(rownames(result), ps$sirName)
+  expect_equal(colnames(result), ps$sirName)
 })
 
-test_that("sirGetProposalCov doubles theta variances with thetaInflation = 2", {
-  orig <- .theo_fit$cov
-  result <- sirGetProposalCov(.theo_fit, thetaInflation = 2, capCorrelation = 1)
-
-  ini_df <- .theo_fit$iniDf
-  theta_names <- ini_df$name[!is.na(ini_df$ntheta) & !ini_df$fix]
-  theta_in <- rownames(orig) %in% theta_names
-
-  # Theta variances should be 2x; omega variances unchanged
-  expect_equal(
-    diag(result)[theta_in],
-    2 * diag(orig)[theta_in],
-    tolerance = 1e-10
+test_that("sirGetProposalCov inflates each kind with its own factor", {
+  skip_on_cran()
+  orig <- theoFit()$cov
+  ps <- .sirParamSpace(theoFit())
+  result <- sirGetProposalCov(
+    theoFit(),
+    thetaInflation = 2,
+    sigmaInflation = 3,
+    omegaInflation = 4,
+    capCorrelation = 1
   )
+  expected <- c(theta = 2, sigma = 3, omegaDiag = 4)[ps$kind]
   expect_equal(
-    diag(result)[!theta_in],
-    diag(orig)[!theta_in],
+    unname(diag(result)),
+    unname(diag(orig) * expected),
     tolerance = 1e-10
   )
   # Correlations must be preserved
-  expect_equal(cov2cor(result), cov2cor(orig), tolerance = 1e-10)
+  expect_equal(
+    unname(cov2cor(result)),
+    unname(cov2cor(orig)),
+    tolerance = 1e-10
+  )
+})
+
+test_that("sirGetProposalCov applies sigmaInflation to residual error only", {
+  skip_on_cran()
+  orig <- theoFit()$cov
+  ps <- .sirParamSpace(theoFit())
+  result <- sirGetProposalCov(theoFit(), sigmaInflation = 9, capCorrelation = 1)
+  isSigma <- ps$kind == "sigma"
+  expect_equal(
+    unname(diag(result)[isSigma]),
+    unname(diag(orig)[isSigma] * 9),
+    tolerance = 1e-10
+  )
+  expect_equal(
+    unname(diag(result)[!isSigma]),
+    unname(diag(orig)[!isSigma]),
+    tolerance = 1e-10
+  )
 })
 
 
 test_that("sirGetProposalCov caps correlations at capCorrelation", {
+  skip_on_cran()
   # Inflate theta 10x to push correlations toward 1, then cap at 0.3
   result <- sirGetProposalCov(
-    .theo_fit,
+    theoFit(),
     thetaInflation = 10,
     capCorrelation = 0.3
   )
@@ -72,40 +67,42 @@ test_that("sirGetProposalCov caps correlations at capCorrelation", {
 })
 
 test_that("sirGetProposalCov with capCorrelation = 1 leaves correlations unchanged", {
-  orig <- .theo_fit$cov
-  result <- sirGetProposalCov(.theo_fit, capCorrelation = 1)
-  expect_equal(cov2cor(result), cov2cor(orig), tolerance = 1e-10)
+  skip_on_cran()
+  orig <- theoFit()$cov
+  result <- sirGetProposalCov(theoFit(), capCorrelation = 1)
+  expect_equal(
+    unname(cov2cor(result)),
+    unname(cov2cor(orig)),
+    tolerance = 1e-10
+  )
 })
 
 test_that("sirGetProposalCov result is symmetric", {
+  skip_on_cran()
   result <- sirGetProposalCov(
-    .theo_fit,
+    theoFit(),
     thetaInflation = 2,
     capCorrelation = 0.8
   )
   expect_equal(result, t(result), tolerance = 1e-14)
 })
 
-test_that("sirGetProposalCov preserves parameter names from fit$cov", {
-  result <- sirGetProposalCov(.theo_fit)
-  expect_equal(rownames(result), rownames(.theo_fit$cov))
-  expect_equal(colnames(result), colnames(.theo_fit$cov))
+test_that("sirGetProposalCov renames fit$cov rows to SIR parameter names", {
+  skip_on_cran()
+  result <- sirGetProposalCov(blockFit())
+  ps <- .sirParamSpace(blockFit())
+  expect_equal(rownames(result), ps$sirName)
+  expect_equal(colnames(result), ps$sirName)
+  expect_true("eta.cl:eta.ka" %in% rownames(result))
 })
 
 test_that("sirGetProposalCov errors when fit has no covariance matrix", {
-  # Strip the covariance by fitting without a cov step
-  fit_no_cov <- suppressMessages(
-    nlmixr2utils::nlmixr2(
-      .theo_one_cmt,
-      nlmixr2data::theo_sd,
-      est = "focei",
-      control = list(print = 0L, covMethod = "")
-    )
-  )
-  expect_error(sirGetProposalCov(fit_no_cov), "covariance matrix")
+  skip_on_cran()
+  expect_error(sirGetProposalCov(theoFitNoCov()), "covariance matrix")
 })
 
 test_that("sirGetProposalCov errors on non-fit input", {
+  skip_on_cran()
   expect_error(sirGetProposalCov(list()), class = "error")
 })
 
@@ -120,6 +117,7 @@ test_that("sirGetProposalCov errors on non-fit input", {
 )
 
 test_that("sirSampleTheta returns n rows with no bounds", {
+  skip_on_cran()
   set.seed(1)
   res <- sirSampleTheta(.mu3, .cov3, n = 200L)
   expect_equal(nrow(res$samples), 200L)
@@ -128,12 +126,14 @@ test_that("sirSampleTheta returns n rows with no bounds", {
 })
 
 test_that("sirSampleTheta column names match mu", {
+  skip_on_cran()
   set.seed(1)
   res <- sirSampleTheta(.mu3, .cov3, n = 50L)
   expect_equal(colnames(res$samples), names(.mu3))
 })
 
 test_that("sirSampleTheta respects lower and upper bounds", {
+  skip_on_cran()
   set.seed(42)
   lo <- .mu3 - 0.5
   hi <- .mu3 + 0.5
@@ -143,6 +143,7 @@ test_that("sirSampleTheta respects lower and upper bounds", {
 })
 
 test_that("sirSampleTheta nRejected increases with tight bounds", {
+  skip_on_cran()
   set.seed(7)
   # Wide bounds: expect few rejections
   res_wide <- sirSampleTheta(
@@ -166,6 +167,7 @@ test_that("sirSampleTheta nRejected increases with tight bounds", {
 })
 
 test_that("sirSampleTheta is reproducible with set.seed", {
+  skip_on_cran()
   set.seed(99)
   r1 <- sirSampleTheta(.mu3, .cov3, n = 50L)
   set.seed(99)
@@ -174,6 +176,7 @@ test_that("sirSampleTheta is reproducible with set.seed", {
 })
 
 test_that("sirSampleTheta warns and returns fewer rows when bounds exclude all draws", {
+  skip_on_cran()
   # Bounds set to a tiny region far from mu — all draws will be rejected
   lo <- .mu3 + 1e6
   hi <- .mu3 + 1e6 + 1e-9
@@ -186,6 +189,7 @@ test_that("sirSampleTheta warns and returns fewer rows when bounds exclude all d
 })
 
 test_that("sirSampleTheta scalar bounds are recycled to length p", {
+  skip_on_cran()
   set.seed(3)
   res <- sirSampleTheta(.mu3, .cov3, n = 100L, lower = -100, upper = 100)
   expect_equal(nrow(res$samples), 100L)
@@ -204,12 +208,14 @@ test_that("sirSampleTheta scalar bounds are recycled to length p", {
 .omega2_cov <- diag(c(0.05^2, 0.02^2, 0.04^2))
 
 test_that("sirSampleOmegaSigma returns n matrices", {
+  skip_on_cran()
   set.seed(1)
   res <- sirSampleOmegaSigma(.omega2, .omega2_cov, n = 50L)
   expect_length(res$samples, 50L)
 })
 
 test_that("sirSampleOmegaSigma all samples are positive definite", {
+  skip_on_cran()
   set.seed(2)
   res <- sirSampleOmegaSigma(.omega2, .omega2_cov, n = 100L)
   pd_ok <- vapply(
@@ -229,6 +235,7 @@ test_that("sirSampleOmegaSigma all samples are positive definite", {
 })
 
 test_that("sirSampleOmegaSigma all samples are symmetric", {
+  skip_on_cran()
   set.seed(3)
   res <- sirSampleOmegaSigma(.omega2, .omega2_cov, n = 50L)
   sym_ok <- vapply(
@@ -240,6 +247,7 @@ test_that("sirSampleOmegaSigma all samples are symmetric", {
 })
 
 test_that("sirSampleOmegaSigma preserves dimnames from omegaEst", {
+  skip_on_cran()
   set.seed(4)
   res <- sirSampleOmegaSigma(.omega2, .omega2_cov, n = 10L)
   dn_ok <- vapply(
@@ -253,6 +261,7 @@ test_that("sirSampleOmegaSigma preserves dimnames from omegaEst", {
 })
 
 test_that("sirSampleOmegaSigma nRejected is non-negative integer", {
+  skip_on_cran()
   set.seed(5)
   res <- sirSampleOmegaSigma(.omega2, .omega2_cov, n = 50L)
   expect_true(is.integer(res$nRejected) || is.numeric(res$nRejected))
@@ -260,6 +269,7 @@ test_that("sirSampleOmegaSigma nRejected is non-negative integer", {
 })
 
 test_that("sirSampleOmegaSigma is reproducible with set.seed", {
+  skip_on_cran()
   set.seed(77)
   r1 <- sirSampleOmegaSigma(.omega2, .omega2_cov, n = 30L)
   set.seed(77)
@@ -268,6 +278,7 @@ test_that("sirSampleOmegaSigma is reproducible with set.seed", {
 })
 
 test_that("sirSampleOmegaSigma warns and returns fewer matrices when budget exhausted", {
+  skip_on_cran()
   # Mean is a non-PD configuration (large off-diagonal, tiny diagonals);
   # near-zero variance pins draws close to the mean → ~0% PD rate.
   bad_omega <- matrix(
@@ -285,6 +296,7 @@ test_that("sirSampleOmegaSigma warns and returns fewer matrices when budget exha
 })
 
 test_that("sirSampleOmegaSigma works with 1x1 OMEGA (single eta)", {
+  skip_on_cran()
   omega1 <- matrix(0.4, 1L, 1L, dimnames = list("eta.ka", "eta.ka"))
   cov1 <- matrix(0.01, 1L, 1L)
   set.seed(9)
@@ -297,30 +309,33 @@ test_that("sirSampleOmegaSigma works with 1x1 OMEGA (single eta)", {
 # Step 4: sirEvalOFV -----------------------------------------------------------
 
 test_that("sirEvalOFV returns OFV close to fit$objf at true estimates", {
-  mu <- .theo_fit$theta[rownames(.theo_fit$cov)]
+  skip_on_cran()
+  mu <- .sirProposalMu(theoFit())
   param_mat <- matrix(mu, nrow = 1L, dimnames = list(NULL, names(mu)))
 
-  ofvs <- sirEvalOFV(.theo_fit, param_mat)
+  ofvs <- sirEvalOFV(theoFit(), param_mat)
 
   expect_length(ofvs, 1L)
   expect_false(is.na(ofvs[1L]))
-  expect_lt(abs(ofvs[1L] - .theo_fit$objf), 1)
+  expect_lt(abs(ofvs[1L] - theoFit()$objf), 1)
 })
 
 test_that("sirEvalOFV returns NA for a clearly invalid parameter vector", {
-  mu <- .theo_fit$theta[rownames(.theo_fit$cov)]
+  skip_on_cran()
+  mu <- .sirProposalMu(theoFit())
   bad <- mu
   bad["tka"] <- 1e10 # absurdly large; model should fail or produce NA
   param_mat <- matrix(bad, nrow = 1L, dimnames = list(NULL, names(bad)))
 
-  ofvs <- suppressWarnings(sirEvalOFV(.theo_fit, param_mat))
+  ofvs <- suppressWarnings(sirEvalOFV(theoFit(), param_mat))
 
   expect_length(ofvs, 1L)
   expect_true(is.na(ofvs[1L]) || is.finite(ofvs[1L])) # NA or a number (not NaN/Inf)
 })
 
 test_that("sirEvalOFV returns a vector with one entry per row", {
-  mu <- .theo_fit$theta[rownames(.theo_fit$cov)]
+  skip_on_cran()
+  mu <- .sirProposalMu(theoFit())
   # Three rows: true estimates, slight perturbations
   param_mat <- rbind(
     mu,
@@ -329,62 +344,67 @@ test_that("sirEvalOFV returns a vector with one entry per row", {
   )
   dimnames(param_mat) <- list(NULL, names(mu))
 
-  ofvs <- sirEvalOFV(.theo_fit, param_mat)
+  ofvs <- sirEvalOFV(theoFit(), param_mat)
 
   expect_length(ofvs, 3L)
   expect_true(all(!is.na(ofvs)))
 })
 
 test_that("sirEvalOFV returns the same OFVs with future workers", {
+  skip_on_cran()
   skip_if_not_installed("future")
   skip_if_not_installed("future.apply")
   plan_before <- future::plan()
   on.exit(future::plan(plan_before), add = TRUE)
 
-  mu <- .theo_fit$theta[rownames(.theo_fit$cov)]
+  mu <- .sirProposalMu(theoFit())
   param_mat <- rbind(
     mu,
     mu + 0.01
   )
   dimnames(param_mat) <- list(NULL, names(mu))
 
-  ofv_seq <- suppressMessages(sirEvalOFV(.theo_fit, param_mat, workers = 1L))
-  ofv_par <- suppressMessages(sirEvalOFV(.theo_fit, param_mat, workers = 2L))
+  ofv_seq <- suppressMessages(sirEvalOFV(theoFit(), param_mat, workers = 1L))
+  ofv_par <- suppressMessages(sirEvalOFV(theoFit(), param_mat, workers = 2L))
 
   expect_equal(ofv_par, ofv_seq, tolerance = 1e-8)
 })
 
-test_that("sirEvalOFV handles diagonal omega columns for multi-ETA models", {
-  three_eta_one_cmt <- function() {
-    ini({
-      tka <- 0.45
-      tcl <- 1.00
-      tv <- 3.45
-      eta.ka ~ 0.6
-      eta.cl ~ 0.3
-      eta.v ~ 0.1
-      add.sd <- 0.7
-    })
-    model({
-      ka <- exp(tka + eta.ka)
-      cl <- exp(tcl + eta.cl)
-      v <- exp(tv + eta.v)
-      linCmt() ~ add(add.sd)
-    })
-  }
-
-  fit <- suppressMessages(suppressWarnings(
-    nlmixr2utils::nlmixr2(
-      three_eta_one_cmt,
-      nlmixr2data::theo_sd,
-      est = "focei",
-      control = list(print = 0L),
-      table = list(npde = TRUE, cwres = TRUE)
+# rxode2::ini() evaluates the OMEGA line as lotri({...}) in the caller's
+# environment. lotri is an Imports of rxode2 and nlmixr2est, so it is never
+# attached; without nlmixr2sir importing it, every OFV evaluation returned NA
+# in a session where the user had not also attached nlmixr2.
+test_that("lotri is imported, so OFV evaluation works without library(nlmixr2)", {
+  skip_on_cran()
+  expect_true(
+    exists(
+      "lotri",
+      envir = parent.env(asNamespace("nlmixr2sir")),
+      inherits = FALSE
     )
-  ))
+  )
+})
+
+test_that("sirEvalOFV keeps the underlying error when evaluation fails", {
+  skip_on_cran()
+  nms <- .sirParamSpace(theoFit())$sirName
+  bad <- matrix(
+    NA_real_,
+    nrow = 1L,
+    ncol = length(nms),
+    dimnames = list(NULL, nms)
+  )
+  res <- suppressMessages(sirEvalOFV(theoFit(), bad, workers = 1L))
+  expect_true(is.na(res))
+  expect_type(attr(res, "evalErrors"), "character")
+})
+
+test_that("sirEvalOFV handles diagonal omega columns for multi-ETA models", {
+  skip_on_cran()
+  fit <- threeEtaFit()
   proposal <- .sirInitialProposal(
     fit,
-    fit$theta[rownames(fit$cov)],
+    .sirProposalMu(fit),
     sirGetProposalCov(fit),
     capCorrelation = 0.8
   )
@@ -405,12 +425,13 @@ test_that("sirEvalOFV handles diagonal omega columns for multi-ETA models", {
 })
 
 test_that("sirEvalOFV OFV increases away from the estimates", {
-  mu <- .theo_fit$theta[rownames(.theo_fit$cov)]
+  skip_on_cran()
+  mu <- .sirProposalMu(theoFit())
   big_offset <- mu + 1 # large shift in all thetas
   param_mat <- rbind(mu, big_offset)
   dimnames(param_mat) <- list(NULL, names(mu))
 
-  ofvs <- suppressWarnings(sirEvalOFV(.theo_fit, param_mat))
+  ofvs <- suppressWarnings(sirEvalOFV(theoFit(), param_mat))
 
   expect_true(!is.na(ofvs[1L]))
   # OFV at true values should be lower (better fit)
@@ -418,8 +439,9 @@ test_that("sirEvalOFV OFV increases away from the estimates", {
 })
 
 test_that("sirEvalOFV errors when no columns match fit parameters", {
+  skip_on_cran()
   bad_mat <- matrix(1, nrow = 1L, dimnames = list(NULL, "not_a_param"))
-  expect_error(sirEvalOFV(.theo_fit, bad_mat), "match")
+  expect_error(sirEvalOFV(theoFit(), bad_mat), "match")
 })
 
 # Step 5: sirCalcWeights -------------------------------------------------------
@@ -433,12 +455,14 @@ test_that("sirEvalOFV errors when no columns match fit parameters", {
 )
 
 test_that("sirCalcWeights: relPDF = 1 at the proposal mean", {
+  skip_on_cran()
   samp <- matrix(.wt_mu, nrow = 1L, dimnames = list(NULL, names(.wt_mu)))
   res <- sirCalcWeights(samp, .wt_mu, .wt_cov, dOFV = 0)
   expect_equal(res$relPDF[1L], 1, tolerance = 1e-12)
 })
 
 test_that("sirCalcWeights: prob_resample sums to 1", {
+  skip_on_cran()
   set.seed(1)
   samp <- mvtnorm::rmvnorm(50L, mean = .wt_mu, sigma = .wt_cov)
   dofv <- rnorm(50L, mean = 0, sd = 2)
@@ -447,6 +471,7 @@ test_that("sirCalcWeights: prob_resample sums to 1", {
 })
 
 test_that("sirCalcWeights: negative dOFV (better fit) gives IR > 1 at mu", {
+  skip_on_cran()
   # At mu: relPDF = 1, so IR = exp(-0.5 * dOFV); dOFV < 0 → IR > 1
   samp <- matrix(.wt_mu, nrow = 1L, dimnames = list(NULL, names(.wt_mu)))
   res <- sirCalcWeights(samp, .wt_mu, .wt_cov, dOFV = -2)
@@ -454,6 +479,7 @@ test_that("sirCalcWeights: negative dOFV (better fit) gives IR > 1 at mu", {
 })
 
 test_that("sirCalcWeights: NA dOFV gives prob_resample = 0", {
+  skip_on_cran()
   set.seed(2)
   samp <- mvtnorm::rmvnorm(5L, mean = .wt_mu, sigma = .wt_cov)
   dofv <- c(1, NA, 2, NA, 0.5)
@@ -464,6 +490,7 @@ test_that("sirCalcWeights: NA dOFV gives prob_resample = 0", {
 })
 
 test_that("sirCalcWeights: output has correct structure", {
+  skip_on_cran()
   set.seed(3)
   samp <- mvtnorm::rmvnorm(10L, mean = .wt_mu, sigma = .wt_cov)
   res <- sirCalcWeights(samp, .wt_mu, .wt_cov, dOFV = rep(0, 10L))
@@ -483,6 +510,7 @@ test_that("sirCalcWeights: output has correct structure", {
 })
 
 test_that("sirCalcWeights: relPDF decreases away from mu", {
+  skip_on_cran()
   far <- matrix(.wt_mu + 5, nrow = 1L, dimnames = list(NULL, names(.wt_mu)))
   near <- matrix(.wt_mu + 0.01, nrow = 1L, dimnames = list(NULL, names(.wt_mu)))
   samp <- rbind(far, near)
@@ -491,12 +519,14 @@ test_that("sirCalcWeights: relPDF decreases away from mu", {
 })
 
 test_that("sirCalcWeights: positive dOFV (worse fit) at mu gives IR < 1", {
+  skip_on_cran()
   samp <- matrix(.wt_mu, nrow = 1L, dimnames = list(NULL, names(.wt_mu)))
   res <- sirCalcWeights(samp, .wt_mu, .wt_cov, dOFV = 4)
   expect_lt(res$importance_ratio[1L], 1)
 })
 
 test_that("sirCalcWeights: errors on non-PD covMat", {
+  skip_on_cran()
   bad_cov <- matrix(c(1, 2, 2, 1), 2L) # not PD
   samp <- matrix(c(1, 2), nrow = 1L)
   expect_error(
@@ -506,6 +536,7 @@ test_that("sirCalcWeights: errors on non-PD covMat", {
 })
 
 test_that("sirCalcWeights: log-space normalization handles extreme weights", {
+  skip_on_cran()
   cov_mat <- diag(2)
   mu <- c(a = 0, b = 0)
   samp <- matrix(
@@ -534,6 +565,7 @@ test_that("sirCalcWeights: log-space normalization handles extreme weights", {
 }
 
 test_that("sirResample returns m rows", {
+  skip_on_cran()
   set.seed(1)
   samp <- matrix(rnorm(30L), nrow = 10L)
   res <- sirResample(samp, .uniform_weights(10L), m = 5L)
@@ -542,6 +574,7 @@ test_that("sirResample returns m rows", {
 })
 
 test_that("sirResample resampleCounts sums to m", {
+  skip_on_cran()
   set.seed(2)
   samp <- matrix(rnorm(30L), nrow = 10L)
   res <- sirResample(samp, .uniform_weights(10L), m = 6L)
@@ -550,6 +583,7 @@ test_that("sirResample resampleCounts sums to m", {
 })
 
 test_that("sirResample with capped replacement can repeatedly select row 1", {
+  skip_on_cran()
   samp <- matrix(1:20, nrow = 5L)
   res <- sirResample(samp, .spike_weights(5L), m = 5L, capResampling = 5L)
   # Every resampled row should equal samp[1, ]
@@ -559,6 +593,7 @@ test_that("sirResample with capped replacement can repeatedly select row 1", {
 })
 
 test_that("sirResample cap is respected: no sample exceeds capResampling", {
+  skip_on_cran()
   set.seed(3)
   samp <- matrix(rnorm(50L), nrow = 10L)
   cap <- 3L
@@ -569,6 +604,7 @@ test_that("sirResample cap is respected: no sample exceeds capResampling", {
 })
 
 test_that("sirResample cap = 1 samples without replacement", {
+  skip_on_cran()
   set.seed(4)
   samp <- matrix(rnorm(30L), nrow = 10L)
   res <- sirResample(samp, .uniform_weights(10L), m = 10L, capResampling = 1)
@@ -578,6 +614,7 @@ test_that("sirResample cap = 1 samples without replacement", {
 })
 
 test_that("sirResample with cap forces spread when one sample dominates", {
+  skip_on_cran()
   set.seed(5)
   samp <- matrix(rnorm(50L), nrow = 10L)
   # Uniform weights + cap = 3: row 1 cannot be selected more than 3 times
@@ -588,6 +625,7 @@ test_that("sirResample with cap forces spread when one sample dominates", {
 })
 
 test_that("sirResample selected rows all come from original samples", {
+  skip_on_cran()
   set.seed(6)
   samp <- matrix(seq_len(20L), nrow = 5L)
   res <- sirResample(samp, .uniform_weights(5L), m = 5L)
@@ -599,6 +637,7 @@ test_that("sirResample selected rows all come from original samples", {
 })
 
 test_that("sirResample returns sample-order metadata", {
+  skip_on_cran()
   set.seed(7)
   samp <- matrix(seq_len(20L), nrow = 5L)
   res <- sirResample(samp, .uniform_weights(5L), m = 5L)
@@ -610,6 +649,7 @@ test_that("sirResample returns sample-order metadata", {
 # Step 7: sirBoxCox / sirBoxCoxInverse -----------------------------------------
 
 test_that("sirBoxCox with lambda = 1 is a linear (affine) transformation of x", {
+  skip_on_cran()
   x <- c(1, 2, 4, 8, 16)
   res <- sirBoxCox(x, lambda = 1)
   # transformed = (x + delta)^1 - 1 = x + delta - 1, linear in x
@@ -618,6 +658,7 @@ test_that("sirBoxCox with lambda = 1 is a linear (affine) transformation of x", 
 })
 
 test_that("sirBoxCox with lambda = 0 returns log(x + delta)", {
+  skip_on_cran()
   x <- c(1, 2, 4, 8, 16)
   delta <- abs(min(x)) + 1e-6
   res <- sirBoxCox(x, lambda = 0)
@@ -625,6 +666,7 @@ test_that("sirBoxCox with lambda = 0 returns log(x + delta)", {
 })
 
 test_that("sirBoxCoxInverse recovers x after sirBoxCox (lambda estimated)", {
+  skip_on_cran()
   set.seed(1)
   x <- exp(rnorm(50L)) # log-normal: should yield lambda ≈ 0
   res <- sirBoxCox(x)
@@ -633,6 +675,7 @@ test_that("sirBoxCoxInverse recovers x after sirBoxCox (lambda estimated)", {
 })
 
 test_that("sirBoxCoxInverse recovers x for fixed lambda = 1", {
+  skip_on_cran()
   x <- c(0.5, 1, 2, 5, 10)
   res <- sirBoxCox(x, lambda = 1)
   x_back <- sirBoxCoxInverse(res$transformed, res$lambda, res$delta)
@@ -640,6 +683,7 @@ test_that("sirBoxCoxInverse recovers x for fixed lambda = 1", {
 })
 
 test_that("sirBoxCoxInverse recovers x for fixed lambda = 0 (log case)", {
+  skip_on_cran()
   x <- c(0.1, 0.5, 1, 5, 20)
   res <- sirBoxCox(x, lambda = 0)
   x_back <- sirBoxCoxInverse(res$transformed, res$lambda, res$delta)
@@ -647,6 +691,7 @@ test_that("sirBoxCoxInverse recovers x for fixed lambda = 0 (log case)", {
 })
 
 test_that("sirBoxCox estimated lambda improves normality vs untransformed", {
+  skip_on_cran()
   set.seed(2)
   x <- rexp(100L, rate = 2) # clearly right-skewed
   res <- sirBoxCox(x)
@@ -657,6 +702,7 @@ test_that("sirBoxCox estimated lambda improves normality vs untransformed", {
 })
 
 test_that("sirBoxCox returns correct list structure", {
+  skip_on_cran()
   x <- rnorm(20L) + 5
   res <- sirBoxCox(x)
   expect_named(res, c("transformed", "lambda", "delta"))
@@ -666,6 +712,7 @@ test_that("sirBoxCox returns correct list structure", {
 })
 
 test_that("sirBoxCox delta defaults to |min(x)| + 1e-6", {
+  skip_on_cran()
   x <- c(-3, 0, 1, 5)
   res <- sirBoxCox(x, lambda = 1)
   expected_delta <- abs(min(x)) + 1e-6
@@ -673,12 +720,14 @@ test_that("sirBoxCox delta defaults to |min(x)| + 1e-6", {
 })
 
 test_that("sirBoxCox supplied delta is respected", {
+  skip_on_cran()
   x <- c(1, 2, 3)
   res <- sirBoxCox(x, lambda = 1, delta = 0.5)
   expect_equal(res$delta, 0.5)
 })
 
 test_that("sirBoxCoxInverse errors when back-transform base is non-positive", {
+  skip_on_cran()
   # lambda = 2, x_transformed = -1 → base = 2*(-1) + 1 = -1 ≤ 0
   expect_error(sirBoxCoxInverse(-1, lambda = 2, delta = 0), "positive")
 })
@@ -686,6 +735,7 @@ test_that("sirBoxCoxInverse errors when back-transform base is non-positive", {
 # Step 8: sirUpdateProposal ----------------------------------------------------
 
 test_that("sirUpdateProposal covMat is symmetric", {
+  skip_on_cran()
   set.seed(1)
   mat <- matrix(
     rexp(100L),
@@ -697,6 +747,7 @@ test_that("sirUpdateProposal covMat is symmetric", {
 })
 
 test_that("sirUpdateProposal covMat is positive semi-definite", {
+  skip_on_cran()
   set.seed(2)
   mat <- matrix(rexp(60L), nrow = 20L, dimnames = list(NULL, c("a", "b", "c")))
   res <- sirUpdateProposal(mat)
@@ -705,6 +756,7 @@ test_that("sirUpdateProposal covMat is positive semi-definite", {
 })
 
 test_that("sirUpdateProposal preserves column names", {
+  skip_on_cran()
   set.seed(3)
   nms <- c("tka", "tcl", "tv")
   mat <- matrix(rnorm(60L) + 5, nrow = 20L, dimnames = list(NULL, nms))
@@ -714,6 +766,7 @@ test_that("sirUpdateProposal preserves column names", {
 })
 
 test_that("sirUpdateProposal boxcoxParams has correct structure when boxcox = TRUE", {
+  skip_on_cran()
   set.seed(4)
   nms <- c("p1", "p2")
   mat <- matrix(rexp(40L), nrow = 20L, dimnames = list(NULL, nms))
@@ -725,6 +778,7 @@ test_that("sirUpdateProposal boxcoxParams has correct structure when boxcox = TR
 })
 
 test_that("sirUpdateProposal boxcoxParams is NULL when boxcox = FALSE", {
+  skip_on_cran()
   set.seed(5)
   mat <- matrix(rnorm(40L), nrow = 20L)
   res <- sirUpdateProposal(mat, boxcox = FALSE)
@@ -732,6 +786,7 @@ test_that("sirUpdateProposal boxcoxParams is NULL when boxcox = FALSE", {
 })
 
 test_that("sirUpdateProposal boxcox = FALSE matches cov() directly", {
+  skip_on_cran()
   set.seed(6)
   mat <- matrix(rnorm(60L), nrow = 20L, dimnames = list(NULL, c("a", "b", "c")))
   res <- sirUpdateProposal(mat, boxcox = FALSE)
@@ -740,6 +795,7 @@ test_that("sirUpdateProposal boxcox = FALSE matches cov() directly", {
 })
 
 test_that("sirUpdateProposal lambdas are retrievable and finite", {
+  skip_on_cran()
   set.seed(7)
   mat <- matrix(
     rexp(80L),
@@ -754,28 +810,10 @@ test_that("sirUpdateProposal lambdas are retrievable and finite", {
 # Step 9: sirRunIteration ------------------------------------------------------
 # These tests require OFV evaluation so use tiny nSamples (8) for speed.
 
-.iter1 <- local({
-  set.seed(42)
-  mu <- .theo_fit$theta[rownames(.theo_fit$cov)]
-  prop_cov <- sirGetProposalCov(.theo_fit)
-  suppressMessages(
-    sirRunIteration(
-      .theo_fit,
-      mu = mu,
-      proposalCov = prop_cov,
-      nSamples = 8L,
-      nResample = 4L,
-      iterNum = 1L,
-      recenter = TRUE,
-      boxcox = TRUE,
-      directory = NULL
-    )
-  )
-})
-
 test_that("sirRunIteration returns correct list structure", {
+  skip_on_cran()
   expect_named(
-    .iter1,
+    iter1(),
     c(
       "resampledMat",
       "newMu",
@@ -788,11 +826,13 @@ test_that("sirRunIteration returns correct list structure", {
 })
 
 test_that("sirRunIteration resampledMat has nResample rows", {
-  expect_equal(nrow(.iter1$resampledMat), 4L)
+  skip_on_cran()
+  expect_equal(nrow(iter1()$resampledMat), 4L)
 })
 
 test_that("sirRunIteration iterSummary has expected columns and values", {
-  s <- .iter1$iterSummary
+  skip_on_cran()
+  s <- iter1()$iterSummary
   expect_named(
     s,
     c(
@@ -824,33 +864,38 @@ test_that("sirRunIteration iterSummary has expected columns and values", {
 })
 
 test_that("sirRunIteration newMu is a named numeric vector matching proposal params", {
-  mu_names <- colnames(.iter1$resampledMat)
-  expect_named(.iter1$newMu, mu_names)
-  expect_true(is.numeric(.iter1$newMu))
+  skip_on_cran()
+  mu_names <- colnames(iter1()$resampledMat)
+  expect_named(iter1()$newMu, mu_names)
+  expect_true(is.numeric(iter1()$newMu))
 })
 
 test_that("sirRunIteration newCov is symmetric and positive semi-definite", {
-  m <- .iter1$newCov
+  skip_on_cran()
+  m <- iter1()$newCov
   expect_equal(m, t(m), tolerance = 1e-12)
   eigs <- eigen(m, symmetric = TRUE, only.values = TRUE)$values
   expect_true(all(eigs >= -1e-10))
 })
 
 test_that("sirRunIteration boxcoxState has correct structure when boxcox = TRUE", {
-  bc <- .iter1$boxcoxState
+  skip_on_cran()
+  bc <- iter1()$boxcoxState
   expect_s3_class(bc, "data.frame")
   expect_named(bc, c("param", "lambda", "delta"))
-  expect_equal(bc$param, colnames(.iter1$resampledMat))
+  expect_equal(bc$param, colnames(iter1()$resampledMat))
 })
 
 test_that("sirRunIteration rawResults has dOFV column", {
-  expect_true("dOFV" %in% names(.iter1$rawResults))
-  expect_equal(nrow(.iter1$rawResults), .iter1$iterSummary$nCollected + 1L)
-  expect_equal(.iter1$rawResults$sample_id[[1L]], 0L)
-  expect_equal(.iter1$rawResults$dOFV[[1L]], 0)
+  skip_on_cran()
+  expect_true("dOFV" %in% names(iter1()$rawResults))
+  expect_equal(nrow(iter1()$rawResults), iter1()$iterSummary$nCollected + 1L)
+  expect_equal(iter1()$rawResults$sample_id[[1L]], 0L)
+  expect_equal(iter1()$rawResults$dOFV[[1L]], 0)
 })
 
 test_that("sirRunIteration rawResults has PsN-like SIR metadata", {
+  skip_on_cran()
   expect_true(all(
     c(
       "sample_id",
@@ -859,12 +904,16 @@ test_that("sirRunIteration rawResults has PsN-like SIR metadata", {
       "resamples",
       "sample_order"
     ) %in%
-      names(.iter1$rawResults)
+      names(iter1()$rawResults)
   ))
-  expect_equal(sum(.iter1$rawResults$resamples), .iter1$iterSummary$nResampled)
+  expect_equal(
+    sum(iter1()$rawResults$resamples),
+    iter1()$iterSummary$nResampled
+  )
 })
 
 test_that(".sirBuildRawResults expands capped raw-result rows", {
+  skip_on_cran()
   param_mat <- matrix(
     c(1, 2, 3, 4, 5, 6),
     nrow = 3L,
@@ -897,13 +946,14 @@ test_that(".sirBuildRawResults expands capped raw-result rows", {
 })
 
 test_that("sirRunIteration recentering: newMu shifts when a better sample exists", {
+  skip_on_cran()
   # Use a mu perturbed away from estimates so samples near true values get dOFV < 0
-  mu_perturbed <- .theo_fit$theta[rownames(.theo_fit$cov)] + 0.5
-  prop_cov <- sirGetProposalCov(.theo_fit)
+  mu_perturbed <- .sirProposalMu(theoFit()) + 0.5
+  prop_cov <- sirGetProposalCov(theoFit())
   set.seed(1)
   res <- suppressMessages(
     sirRunIteration(
-      .theo_fit,
+      theoFit(),
       mu = mu_perturbed,
       proposalCov = prop_cov,
       nSamples = 8L,
@@ -924,8 +974,9 @@ test_that("sirRunIteration recentering: newMu shifts when a better sample exists
 })
 
 test_that("sirRunIteration keeps raw results in memory when directory is provided", {
-  mu <- .theo_fit$theta[rownames(.theo_fit$cov)]
-  prop_cov <- sirGetProposalCov(.theo_fit)
+  skip_on_cran()
+  mu <- .sirProposalMu(theoFit())
+  prop_cov <- sirGetProposalCov(theoFit())
   tmp_dir <- tempfile("sir_test_")
   dir.create(tmp_dir)
   on.exit(unlink(tmp_dir, recursive = TRUE), add = TRUE)
@@ -933,7 +984,7 @@ test_that("sirRunIteration keeps raw results in memory when directory is provide
   set.seed(9)
   res <- suppressMessages(
     sirRunIteration(
-      .theo_fit,
+      theoFit(),
       mu = mu,
       proposalCov = prop_cov,
       nSamples = 5L,
@@ -951,16 +1002,17 @@ test_that("sirRunIteration keeps raw results in memory when directory is provide
 })
 
 test_that("sirRunIteration chained: iter 2 accepts boxcoxState from iter 1", {
+  skip_on_cran()
   set.seed(77)
   res2 <- suppressMessages(
     sirRunIteration(
-      .theo_fit,
-      mu = .iter1$newMu,
-      proposalCov = .iter1$newCov,
+      theoFit(),
+      mu = iter1()$newMu,
+      proposalCov = iter1()$newCov,
       nSamples = 6L,
       nResample = 3L,
       iterNum = 2L,
-      boxcoxState = .iter1$boxcoxState
+      boxcoxState = iter1()$boxcoxState
     )
   )
   expect_named(
@@ -978,23 +1030,25 @@ test_that("sirRunIteration chained: iter 2 accepts boxcoxState from iter 1", {
 })
 
 test_that("sirRunIteration new proposal includes omega and sigma columns", {
-  expect_true("eta.ka" %in% rownames(.iter1$newCov))
-  expect_true("add.sd" %in% rownames(.iter1$newCov))
-  expect_true("eta.ka" %in% .iter1$boxcoxState$param)
-  expect_true("add.sd" %in% .iter1$boxcoxState$param)
+  skip_on_cran()
+  expect_true("eta.ka" %in% rownames(iter1()$newCov))
+  expect_true("add.sd" %in% rownames(iter1()$newCov))
+  expect_true("eta.ka" %in% iter1()$boxcoxState$param)
+  expect_true("add.sd" %in% iter1()$boxcoxState$param)
 })
 
 test_that("sir initial proposal applies omega and sigma inflation", {
-  mu <- .theo_fit$theta[rownames(.theo_fit$cov)]
-  prop_cov <- sirGetProposalCov(.theo_fit)
+  skip_on_cran()
+  mu <- .sirProposalMu(theoFit())
+  prop_cov <- sirGetProposalCov(theoFit())
   base <- nlmixr2sir:::.sirInitialProposal(
-    .theo_fit,
+    theoFit(),
     mu,
     prop_cov,
     capCorrelation = 1
   )
   inflated <- nlmixr2sir:::.sirInitialProposal(
-    .theo_fit,
+    theoFit(),
     mu,
     prop_cov,
     omegaInflation = 4,
@@ -1013,143 +1067,139 @@ test_that("sir initial proposal applies omega and sigma inflation", {
   )
 })
 
-# Gap fix: .sirOmegaProposalInfo, .sirSigmaInfo, .sirReconstructOmega ----------
+# Gap fix: .sirParamSpace fixed-parameter handling, .sirFallbackSe,
+# .sirReconstructOmega ---------------------------------------------------------
 
-test_that(".sirOmegaProposalInfo returns correct structure for single-eta model", {
-  info <- nlmixr2sir:::.sirOmegaProposalInfo(.theo_fit)
-  expect_s3_class(info, "data.frame")
-  expect_named(info, c("colName", "neta1", "neta2", "est", "se", "isDiag"))
-  # Single eta.ka: one diagonal element
-  expect_equal(nrow(info), 1L)
-  expect_equal(info$colName, "eta.ka")
-  expect_true(info$isDiag)
-  expect_gt(info$se, 0)
+# Minimal stand-in for a fit, so fixed-parameter handling can be tested
+# without a model that takes a minute to converge.
+.fakeFit <- function(fix) {
+  # A plain list, deliberately unclassed: nlmixr2FitCore defines its own `$`
+  # method that a list stand-in cannot satisfy.
+  list(
+    nsub = 20L,
+    cov = NULL,
+    theta = c(tka = 0.4),
+    omega = matrix(
+      c(0.4, 0.05, 0.05, 0.2),
+      2L,
+      2L,
+      dimnames = list(c("eta.ka", "eta.cl"), c("eta.ka", "eta.cl"))
+    ),
+    iniDf = data.frame(
+      ntheta = c(1L, NA, NA, NA),
+      neta1 = c(NA, 1L, 2L, 2L),
+      neta2 = c(NA, 1L, 1L, 2L),
+      name = c("tka", "eta.ka", "(eta.ka,eta.cl)", "eta.cl"),
+      lower = c(-Inf, -Inf, -Inf, -Inf),
+      est = c(0.4, 0.4, 0.05, 0.2),
+      upper = c(Inf, Inf, Inf, Inf),
+      fix = c(FALSE, fix),
+      err = c(NA_character_, NA, NA, NA),
+      stringsAsFactors = FALSE
+    )
+  )
+}
+
+test_that(".sirParamSpace excludes fixed omega elements", {
+  skip_on_cran()
+  ps <- .sirParamSpace(.fakeFit(c(FALSE, TRUE, TRUE)))
+  om <- ps[ps$kind %in% c("omegaDiag", "omegaOffdiag"), ]
+  expect_equal(om$sirName, "eta.ka")
+  expect_equal(om$neta1, 1L)
+  expect_equal(om$neta2, 1L)
 })
 
-test_that(".sirOmegaProposalInfo est matches fit$omega diagonal", {
-  info <- nlmixr2sir:::.sirOmegaProposalInfo(.theo_fit)
+test_that(".sirParamSpace keeps only THETA when every omega is fixed", {
+  skip_on_cran()
+  ps <- .sirParamSpace(.fakeFit(c(TRUE, TRUE, TRUE)))
+  expect_equal(ps$sirName, "tka")
+  expect_equal(ps$kind, "theta")
+})
+
+test_that(".sirParamSpace marks covName NA for a fit with no cov at all", {
+  skip_on_cran()
+  ps <- .sirParamSpace(.fakeFit(c(FALSE, FALSE, FALSE)))
+  expect_true(all(is.na(ps$covName)))
+  expect_equal(nrow(ps), 4L)
+})
+
+test_that(".sirFallbackSe follows the Wishart formula for omega", {
+  skip_on_cran()
+  fit <- .fakeFit(c(FALSE, FALSE, FALSE))
+  ps <- .sirParamSpace(fit)
+  se <- .sirFallbackSe(fit, ps)
+  df <- 20L - 1L
+  om <- fit$omega
+  expect_equal(se[["eta.ka"]], sqrt(2 * om[1, 1]^2 / df), tolerance = 1e-12)
+  expect_equal(se[["eta.cl"]], sqrt(2 * om[2, 2]^2 / df), tolerance = 1e-12)
   expect_equal(
-    info$est[info$isDiag],
-    unname(diag(as.matrix(.theo_fit$omega))),
-    tolerance = 1e-10
+    se[["eta.cl:eta.ka"]],
+    sqrt((om[1, 1] * om[2, 2] + om[2, 1]^2) / df),
+    tolerance = 1e-12
   )
 })
 
-test_that(".sirOmegaProposalInfo excludes fixed omega elements", {
-  fake_fit <- list(
-    nsub = 20L,
-    omega = matrix(
-      c(0.4, 0.05, 0.05, 0.2),
-      2L,
-      2L,
-      dimnames = list(c("eta.ka", "eta.cl"), c("eta.ka", "eta.cl"))
-    ),
-    iniDf = data.frame(
-      name = c("eta.ka", "eta.cl:eta.ka", "eta.cl"),
-      neta1 = c(1L, 2L, 2L),
-      neta2 = c(1L, 1L, 2L),
-      fix = c(FALSE, TRUE, TRUE),
-      stringsAsFactors = FALSE
-    )
+test_that(".sirFallbackSe honours omegaDf", {
+  skip_on_cran()
+  fit <- .fakeFit(c(FALSE, FALSE, FALSE))
+  se <- .sirFallbackSe(fit, omegaDf = 100)
+  expect_equal(
+    se[["eta.ka"]],
+    sqrt(2 * fit$omega[1, 1]^2 / 100),
+    tolerance = 1e-12
   )
-
-  info <- nlmixr2sir:::.sirOmegaProposalInfo(fake_fit)
-  expect_equal(info$colName, "eta.ka")
-  expect_equal(info$neta1, 1L)
-  expect_equal(info$neta2, 1L)
 })
 
-test_that(".sirOmegaProposalInfo returns empty data frame when all omega fixed", {
-  fake_fit <- list(
-    nsub = 20L,
-    omega = matrix(
-      c(0.4, 0.05, 0.05, 0.2),
-      2L,
-      2L,
-      dimnames = list(c("eta.ka", "eta.cl"), c("eta.ka", "eta.cl"))
-    ),
-    iniDf = data.frame(
-      name = c("eta.ka", "eta.cl:eta.ka", "eta.cl"),
-      neta1 = c(1L, 2L, 2L),
-      neta2 = c(1L, 1L, 2L),
-      fix = TRUE,
-      stringsAsFactors = FALSE
-    )
-  )
-
-  info <- nlmixr2sir:::.sirOmegaProposalInfo(fake_fit)
-  expect_s3_class(info, "data.frame")
-  expect_named(info, c("colName", "neta1", "neta2", "est", "se", "isDiag"))
-  expect_equal(nrow(info), 0L)
+test_that(".sirFallbackSe uses sigmaFallbackRse for residual error", {
+  skip_on_cran()
+  fit <- theoFit()
+  ps <- .sirParamSpace(fit)
+  se <- .sirFallbackSe(fit, ps, sigmaFallbackRse = 50)
+  expect_gt(se[["add.sd"]], 0)
 })
 
-test_that(".sirSigmaInfo identifies add.sd as sigma parameter", {
-  si <- nlmixr2sir:::.sirSigmaInfo(.theo_fit)
-  expect_s3_class(si, "data.frame")
-  expect_named(si, c("colName", "est", "se"))
-  expect_true("add.sd" %in% si$colName)
-  expect_gt(si$se[si$colName == "add.sd"], 0)
-})
-
-test_that(".sirSigmaInfo returns NULL when all thetas have covariance", {
-  # Fake fit where cov includes all theta params: pass a mock by manipulating
-  # the check via a small wrapper — instead, just verify the logic on real fit
-  # by confirming that structural thetas are NOT in sigma info
-  si <- nlmixr2sir:::.sirSigmaInfo(.theo_fit)
-  cov_names <- rownames(.theo_fit$cov)
-  sigma_nms <- si$colName
-  expect_true(length(intersect(sigma_nms, cov_names)) == 0L)
-})
-
-test_that(".sirReconstructOmega sets diagonal from named vector", {
-  info <- nlmixr2sir:::.sirOmegaProposalInfo(.theo_fit)
-  base_omega <- .theo_fit$omega
-  vals <- c("eta.ka" = 0.99)
-  mat <- nlmixr2sir:::.sirReconstructOmega(info, vals, base_omega)
+test_that(".sirReconstructOmega sets the diagonal from a named vector", {
+  skip_on_cran()
+  ps <- .sirParamSpace(theoFit())
+  mat <- .sirReconstructOmega(ps, c("eta.ka" = 0.99), theoFit()$omega)
   expect_equal(mat["eta.ka", "eta.ka"], 0.99, tolerance = 1e-12)
 })
 
 test_that(".sirReconstructOmega leaves unspecified elements unchanged", {
-  # 2x2 test case using synthetic omega_info (no real multi-eta fit needed)
-  base_omega <- matrix(
-    c(0.5, 0.1, 0.1, 0.3),
-    2L,
-    2L,
-    dimnames = list(c("eta.ka", "eta.cl"), c("eta.ka", "eta.cl"))
+  skip_on_cran()
+  fit <- .fakeFit(c(FALSE, FALSE, FALSE))
+  ps <- .sirParamSpace(fit)
+  mat <- .sirReconstructOmega(
+    ps,
+    c("eta.ka" = 0.8, "eta.cl:eta.ka" = 0.05),
+    fit$omega
   )
-  info <- data.frame(
-    colName = c("eta.ka", "eta.ka:eta.cl", "eta.cl"),
-    neta1 = c(1L, 2L, 2L),
-    neta2 = c(1L, 1L, 2L),
-    est = c(0.5, 0.1, 0.3),
-    se = c(0.05, 0.02, 0.04),
-    isDiag = c(TRUE, FALSE, TRUE),
-    stringsAsFactors = FALSE
-  )
-  vals <- c("eta.ka" = 0.8, "eta.ka:eta.cl" = 0.05)
-  mat <- nlmixr2sir:::.sirReconstructOmega(info, vals, base_omega)
   expect_equal(mat[1L, 1L], 0.8, tolerance = 1e-12)
   expect_equal(mat[2L, 1L], 0.05, tolerance = 1e-12)
   expect_equal(mat[1L, 2L], 0.05, tolerance = 1e-12)
-  expect_equal(mat[2L, 2L], 0.3, tolerance = 1e-12) # unchanged
+  expect_equal(mat[2L, 2L], 0.2, tolerance = 1e-12) # unchanged
 })
 
 test_that("sirRunIteration rawResults contains sigma column (add.sd)", {
-  expect_true("add.sd" %in% names(.iter1$rawResults))
+  skip_on_cran()
+  expect_true("add.sd" %in% names(iter1()$rawResults))
 })
 
 test_that("sirRunIteration rawResults contains omega column (eta.ka)", {
-  expect_true("eta.ka" %in% names(.iter1$rawResults))
+  skip_on_cran()
+  expect_true("eta.ka" %in% names(iter1()$rawResults))
 })
 
 test_that("sirRunIteration resampledMat contains sigma column (add.sd)", {
-  expect_true("add.sd" %in% colnames(.iter1$resampledMat))
+  skip_on_cran()
+  expect_true("add.sd" %in% colnames(iter1()$resampledMat))
 })
 
 # Step 11: sirSummary ----------------------------------------------------------
 
 test_that("sirSummary returns final SIR summary statistics", {
-  s <- sirSummary(.iter1$resampledMat, .theo_fit)
+  skip_on_cran()
+  s <- sirSummary(iter1()$resampledMat, theoFit())
   expect_s3_class(s, "data.frame")
   expect_named(
     s,
@@ -1167,14 +1217,15 @@ test_that("sirSummary returns final SIR summary statistics", {
       "p97.5"
     )
   )
-  expect_equal(s$param, colnames(.iter1$resampledMat))
-  expect_equal(nrow(s), ncol(.iter1$resampledMat))
+  expect_equal(s$param, colnames(iter1()$resampledMat))
+  expect_equal(nrow(s), ncol(iter1()$resampledMat))
 })
 
 test_that("sirSummary computes empirical SD, RSE, and percentiles", {
-  s <- sirSummary(.iter1$resampledMat, .theo_fit)
+  skip_on_cran()
+  s <- sirSummary(iter1()$resampledMat, theoFit())
   first_param <- s$param[[1L]]
-  x <- .iter1$resampledMat[, first_param]
+  x <- iter1()$resampledMat[, first_param]
   expect_equal(
     s$sd[s$param == first_param],
     stats::sd(x),
@@ -1193,15 +1244,16 @@ test_that("sirSummary computes empirical SD, RSE, and percentiles", {
 })
 
 test_that("sirSummary attaches empirical covariance and correlation matrices", {
-  s <- sirSummary(.iter1$resampledMat, .theo_fit)
+  skip_on_cran()
+  s <- sirSummary(iter1()$resampledMat, theoFit())
   expect_equal(
     attr(s, "covMatrix"),
-    stats::cov(.iter1$resampledMat),
+    stats::cov(iter1()$resampledMat),
     tolerance = 1e-12
   )
   expect_equal(
     attr(s, "corMatrix"),
-    stats::cor(.iter1$resampledMat),
+    stats::cor(iter1()$resampledMat),
     tolerance = 1e-12
   )
 })
@@ -1209,6 +1261,7 @@ test_that("sirSummary attaches empirical covariance and correlation matrices", {
 # Step 10: runSIR --------------------------------------------------------------
 
 test_that(".sirAdjustedAttemptedSamples follows PsN carryover rule", {
+  skip_on_cran()
   expect_equal(nlmixr2sir:::.sirAdjustedAttemptedSamples(100L), 100L)
   expect_equal(
     nlmixr2sir:::.sirAdjustedAttemptedSamples(
@@ -1229,19 +1282,18 @@ test_that(".sirAdjustedAttemptedSamples follows PsN carryover rule", {
 })
 
 test_that("runSIR runs end-to-end and writes Step 10 artifacts", {
+  skip_on_cran()
   tmp_dir <- tempfile("sir_run_")
   on.exit(unlink(tmp_dir, recursive = TRUE), add = TRUE)
 
   set.seed(20260420)
   res <- suppressMessages(
     runSIR(
-      .theo_fit,
+      theoFit(),
       nSamples = c(5L, 5L),
       nResample = c(3L, 3L),
       directory = tmp_dir,
-      recover = FALSE,
-      workers = 1L,
-      boxcox = TRUE
+      control = runSIRControl(recover = FALSE, workers = 1L, boxcox = TRUE)
     )
   )
 
@@ -1277,59 +1329,61 @@ test_that("runSIR runs end-to-end and writes Step 10 artifacts", {
 
   parsed <- nlmixr2utils::parseRawResultsParams(
     raw,
-    .theo_fit
+    theoFit()
   )
   expect_equal(length(parsed), nrow(resampled))
   expect_equal(names(parsed), paste0("sample_", seq_len(nrow(resampled))))
 })
 
-test_that("runSIR rejects invalid workers before running", {
+test_that("runSIRControl rejects invalid workers before running", {
+  skip_on_cran()
+  expect_error(runSIRControl(workers = 0L), "workers")
+})
+
+test_that("runSIR rejects settings passed outside the control object", {
+  skip_on_cran()
   expect_error(
-    runSIR(
-      .theo_fit,
-      nSamples = 1L,
-      nResample = 1L,
-      workers = 0L,
-      recover = FALSE
-    ),
-    "workers"
+    runSIR(theoFit(), nSamples = 1L, nResample = 1L, workers = 1L),
+    "runSIRControl"
+  )
+})
+
+test_that("runSIR requires a control object of the right class", {
+  skip_on_cran()
+  expect_error(
+    runSIR(theoFit(), nSamples = 1L, nResample = 1L, control = list()),
+    "runSIRControl"
   )
 })
 
 # Step 12: S3 print and plot methods ------------------------------------------
 
-.sir_obj <- local({
-  out <- sirSummary(.iter1$resampledMat, .theo_fit)
-  class(out) <- c("nlmixr2SIR", "data.frame")
-  attr(out, "iterationSummary") <- .iter1$iterSummary
-  attr(out, "iterations") <- list(.iter1)
-  attr(out, "resampledMat") <- .iter1$resampledMat
-  attr(out, "outputDir") <- tempdir()
-  out
-})
-
 test_that("print.nlmixr2SIR returns object invisibly and prints tables", {
-  printed <- utils::capture.output(ret <- print(.sir_obj))
-  expect_identical(ret, .sir_obj)
+  skip_on_cran()
+  printed <- utils::capture.output(ret <- print(sirObj()))
+  expect_identical(ret, sirObj())
   expect_match(paste(printed, collapse = "\n"), "param")
   expect_match(paste(printed, collapse = "\n"), "estimate")
   expect_match(paste(printed, collapse = "\n"), "nAttempted")
 })
 
 test_that("plot.nlmixr2SIR returns parameter distribution plot", {
-  p <- plot(.sir_obj)
+  skip_on_cran()
+  p <- plot(sirObj())
   expect_s3_class(p, "ggplot")
   expect_equal(p$labels$x, "Parameter value")
 })
 
 test_that("plot.nlmixr2SIR returns dOFV diagnostic plot", {
-  p <- plot(.sir_obj, type = "dofv", bins = 10L)
+  skip_on_cran()
+  p <- plot(sirObj(), type = "dofv", bins = 10L)
   expect_s3_class(p, "ggplot")
   expect_equal(p$labels$x, "dOFV")
 })
 
 test_that("plot.nlmixr2SIR returns resampling diagnostic plot", {
-  p <- plot(.sir_obj, type = "resampling")
+  skip_on_cran()
+  p <- plot(sirObj(), type = "resampling")
   expect_s3_class(p, "ggplot")
   expect_equal(p$labels$y, "Probability resample")
 })

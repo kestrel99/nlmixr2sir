@@ -139,18 +139,20 @@ sir_result <- runSIR(
   fit,
   nSamples = c(16L, 16L),
   nResample = c(8L, 8L),
-  thetaInflation = 1,
-  omegaInflation = 1,
-  sigmaInflation = 1,
-  capCorrelation = 0.8,
-  capResampling = 1,
-  recenter = TRUE,
-  boxcox = TRUE,
-  workers = 1L,
   directory = file.path(
     tempdir(), paste0("sir_vignette_", format(Sys.time(), "%Y%m%d_%H%M%S"))
   ),
-  recover = FALSE
+  control = runSIRControl(
+    thetaInflation = 1,
+    omegaInflation = 1,
+    sigmaInflation = 1,
+    capCorrelation = 0.8,
+    capResampling = 1,
+    recenter = TRUE,
+    boxcox = TRUE,
+    workers = 1L,
+    recover = FALSE
+  )
 )
 ```
 

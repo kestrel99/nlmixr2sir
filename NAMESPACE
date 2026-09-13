@@ -2,12 +2,17 @@
 
 S3method(plot,nlmixr2SIR)
 S3method(print,nlmixr2SIR)
+S3method(print,runSIRControl)
 export(runSIR)
+export(runSIRControl)
 export(sirSummary)
 importFrom(ggplot2,.data)
-importFrom(stats,cor)
-importFrom(stats,cov)
-importFrom(stats,cov2cor)
-importFrom(stats,qnorm)
-importFrom(stats,setNames)
+importFrom(lotri,lotri)
+importFrom(stats,
+  cor,
+  cov,
+  cov2cor,
+  qnorm,
+  setNames
+)
 importFrom(utils,tail)
