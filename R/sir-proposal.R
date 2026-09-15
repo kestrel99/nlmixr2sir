@@ -366,7 +366,14 @@ sirGetProposalCov <- function(
     n_attempted <- n_attempted + batch_n
 
     original <- .sirBcInverseMatrix(draws, boxcoxState)
-    has_na <- apply(is.na(original), 1L, any)
+    # !is.finite(), not is.na(): the inverse transform can overflow to Inf
+    # without raising, and is.na(Inf) is FALSE. An infinite value then
+    # passed this filter and was tested against the bounds -- where
+    # Inf > Inf is FALSE, so an unbounded parameter sailed through and was
+    # charged to whichever check happened to reject it next, or to none.
+    # A non-finite draw is an inverse failure and is classified as one here,
+    # before any parameter-specific check.
+    has_bad <- apply(!is.finite(original), 1L, any)
     theta_out <- rep(FALSE, nrow(original))
     if (length(thetaNames) > 0L) {
       theta_mat <- original[, thetaNames, drop = FALSE]
@@ -387,11 +394,11 @@ sirGetProposalCov <- function(
         any
       )
     }
-    in_bounds <- !has_na & !theta_out & !sigma_out
+    in_bounds <- !has_bad & !theta_out & !sigma_out
     omega_pd <- vapply(
       seq_len(nrow(original)),
       function(i) {
-        if (has_na[i] || !in_bounds[i]) {
+        if (has_bad[i] || !in_bounds[i]) {
           return(FALSE)
         }
         .sirOmegaPd(ps, original[i, ], baseOmega)
@@ -399,11 +406,11 @@ sirGetProposalCov <- function(
       logical(1L)
     )
 
-    ok <- !has_na & in_bounds & omega_pd
-    inverse_rejected <- inverse_rejected + sum(has_na)
-    theta_rejected <- theta_rejected + sum(!has_na & theta_out)
-    omega_rejected <- omega_rejected + sum(!has_na & in_bounds & !omega_pd)
-    sigma_rejected <- sigma_rejected + sum(!has_na & sigma_out)
+    ok <- !has_bad & in_bounds & omega_pd
+    inverse_rejected <- inverse_rejected + sum(has_bad)
+    theta_rejected <- theta_rejected + sum(!has_bad & theta_out)
+    omega_rejected <- omega_rejected + sum(!has_bad & in_bounds & !omega_pd)
+    sigma_rejected <- sigma_rejected + sum(!has_bad & sigma_out)
 
     n_take <- min(sum(ok), n - n_filled)
     if (n_take > 0L) {
