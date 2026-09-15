@@ -18,6 +18,8 @@ runSIRControl(
   addIterations = FALSE,
   saveFiles = TRUE,
   objfTolerance = 1e-04,
+  objfStencil = TRUE,
+  objfStencilTolerance = 1,
   omegaFallback = c("cov", "wishart"),
   sigmaFallbackRse = 30,
   omegaDf = NULL,
@@ -82,6 +84,15 @@ the objective at the fit's own estimates and compares it with
 within this tolerance. It is the per-run evidence that candidates are
 scored on the same surface the dOFVs are measured against. Raise it only
 when the difference is understood.}
+
+\item{objfStencil}{Logical. If \code{TRUE} (default) the objective preflight also
+evaluates small perturbations either side of every parameter and requires
+the fitted estimates to remain a local optimum. Agreement at the centre
+alone does not establish that two objectives are the same function.}
+
+\item{objfStencilTolerance}{Non-negative number. How much a probe may lower
+the objective before the run is refused. Smaller decreases warn instead,
+since a fit that stopped just short of convergence is common and harmless.}
 
 \item{omegaFallback}{How OMEGA uncertainty is obtained. \code{"cov"} (the
 default) takes it from \code{fit$cov}, including its correlations with THETA,
