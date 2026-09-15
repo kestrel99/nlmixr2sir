@@ -520,3 +520,34 @@ test_that("added iterations resume from the saved reference OFV", {
   added <- state$iterations[[length(state$iterations)]]
   expect_lte(added$referenceOfv, first + 1e-8)
 })
+
+test_that("the noise band keeps a candidate whose raw ratio overflowed", {
+  # sirCalcWeights() normalizes in log space, so prob_resample stays finite even
+  # when importance_ratio = exp(log_ir) overflows to Inf. The real resampler
+  # uses prob_resample and picks the dominant candidate; the diagnostic filtered
+  # on importance_ratio and threw that candidate away, so its band described a
+  # different weighted population from the one that produced the result.
+  raw <- data.frame(
+    sample_id = 1:3,
+    role = c("sample", "sample", "sample"),
+    deltaofv = c(0, -10, -1500),
+    importance_ratio = c(1, 1, Inf),
+    prob_resample = c(2.225074e-308, 2.225074e-308, 1),
+    resamples = c(0L, 1L, 2L)
+  )
+  x <- structure(
+    data.frame(iter = 1L),
+    class = c("nlmixr2SIR", "data.frame"),
+    iterations = list(list(rawResults = raw))
+  )
+
+  # Several quantiles, as the plot path always passes: .sirDofvNoise()
+  # currently errors on a single one (see P6-PROGRESS.md), which is a separate
+  # defect and not what this test is about.
+  band <- .sirDofvNoise(x, 1L, quant = c(0.25, 0.5, 0.75), capResampling = 2)
+
+  expect_false(is.null(band))
+  # Dropping the overflowed row leaves only dOFVs of 0 and -10, so the band
+  # cannot reach -1500. Keeping it, the band sits on the dominant candidate.
+  expect_lt(min(band$low), -100)
+})

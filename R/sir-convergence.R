@@ -99,10 +99,16 @@
   raw <- iterations[[iteration]]$rawResults
   base <- .sirProposalRows(raw)
   nResample <- sum(raw$resamples > 0L)
-  ok <- !is.na(base$deltaofv) &
-    is.finite(base$importance_ratio) &
-    base$importance_ratio > 0
+  # The normalized resampling probability, not the raw importance ratio.
+  # sirCalcWeights() normalizes in log space, so prob_resample is finite by
+  # construction, while importance_ratio = exp(log_ir) can overflow to Inf on a
+  # strongly favoured candidate. Filtering on the raw ratio therefore discarded
+  # exactly the candidate carrying all the weight, and the band then described
+  # a different weighted population from the one the resampler drew from.
+  prob <- base$prob_resample %||% base$probability_resample
+  ok <- !is.na(base$deltaofv) & is.finite(prob) & prob > 0
   base <- base[ok, , drop = FALSE]
+  prob <- prob[ok]
   if (nrow(base) < 2L || nResample < 2L) {
     return(NULL)
   }
@@ -113,14 +119,12 @@
   # produced the retained sample, which is the one thing a noise band must not
   # do.
   cap <- max(1L, as.integer(floor(capResampling)))
-  usable <- sum(base$importance_ratio > 0)
+  usable <- length(prob)
   draws <- min(nResample, usable * cap)
   if (draws < 2L) {
     return(NULL)
   }
-  weights <- data.frame(
-    prob_resample = base$importance_ratio / sum(base$importance_ratio)
-  )
+  weights <- data.frame(prob_resample = prob / sum(prob))
   dofvMat <- matrix(
     base$deltaofv,
     ncol = 1L,
