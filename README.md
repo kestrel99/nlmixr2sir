@@ -164,8 +164,10 @@ it draws the empirical dOFV quantile curve for the proposal and for the
 retained SIR distribution against a reference chi-square on the number of
 estimated parameters. Convergence reads as the SIR curve settling onto the
 reference. If the first iteration's proposal falls below the reference for more
-than a quarter of the quantiles, `runSIR()` warns: the proposal is too narrow,
-and resampling cannot recover from that -- restart with inflation.
+than a quarter of the quantiles, **this plot** warns: the proposal is too
+narrow, and resampling cannot recover from that -- restart with inflation. The
+check runs when the convergence plot is drawn, not during `runSIR()`, so a run
+you never plot will not raise it.
 
 The chi-square reference rests on regular likelihood asymptotics, so read it as
 evidence rather than a certificate. It can mislead for variance components on a
@@ -210,6 +212,8 @@ cannot express that asymmetry, which is a large part of why SIR is run at all.
 | RSE / correlation plot | `plot(type = "rsecor")` | supported |
 | `empirical_statistics()` output | `sirSummary()` | supported |
 | `<model>_sir.cov` | `<fitName>_sir.cov` | supported |
+| draw-attempt budget | `10 x nSamples` | deliberate difference — PsN uses `2000 x nSamples`; see below |
+| OMEGA/SIGMA block adjustment after prolonged rejection | — | deliberate difference — not implemented; see below |
 | `-auto_rawres` | — | not implemented |
 | `-print_iter` | — | not implemented |
 | `-fast_posdef_checks` | — | not implemented |
@@ -219,6 +223,11 @@ cannot express that asymmetry, which is a large part of why SIR is run at all.
 Numeric parity for the sample/resample adjustment, the inflation vector and
 the RSE-to-variance conversion is checked against oracle values taken from
 PsN's own unit tests.
+
+PsN is used here as a comparator and a source of numerical oracles, not as the
+specification. `nlmixr2sir` defines and tests its own statistical contract, and
+the differences listed below are the known deliberate ones rather than an
+exhaustive catalogue of every divergence.
 
 ### Deliberate differences from PsN
 
@@ -238,9 +247,29 @@ of 12.00 with the Jacobian (truth 3 and 12), against 2.25 and 7.31 without it.
 analytic one-dimensional checks.
 
 So SIR here targets the normalized likelihood **on nlmixr2's own parameter
-scale**, and the retained distribution does not move if you re-express the
-model in another smooth parameterization. That is the estimand; it is a
-different one from PsN's, and it is why `-boxcox` is marked partial above.
+scale**. The Jacobian is what makes Box-Cox an internal *proposal*
+transformation: the retained distribution does not move when the internal
+transform changes, because the induced proposal density is divided out
+correctly. That is the estimand; it is a different one from PsN's, and it is
+why `-boxcox` is marked partial above.
+
+It does **not** make the result invariant to re-expressing the *model*. Flat
+normalized likelihood is a choice of base measure: rewrite the model in another
+parameterization and define the estimand against a flat measure there, and the
+two disagree by the Jacobian of that reparameterization. Two models that are
+reparameterizations of each other can give different SIR intervals. That is a
+property of the estimand, not a defect.
+
+**The draw-attempt budget is `10 x nSamples`**, where PsN uses
+`2000 x nSamples`. `runSIR()` is called from an interactive R session, where a
+proposal bad enough to reject 99.95% of draws is better reported quickly than
+ground through. On exhaustion the run warns with the attempted and successful
+counts and continues on however many samples it collected.
+
+**OMEGA/SIGMA blocks are not adjusted after prolonged rejection**, as PsN's are.
+A model whose OMEGA block sits near the positive-definite boundary will
+therefore reject more draws here than under PsN, and may exhaust the budget
+where PsN would have continued. Widen the proposal with the inflation controls.
 
 **`rse` is a percentage** where PsN reports a fraction.
 
@@ -325,7 +354,7 @@ For a fuller worked example, see the package vignette:
 
 For a specification of the implementation -- the proposal sources, the
 importance-ratio and resampling maths, the Box-Cox proposal update, the
-diagnostics, and every deliberate difference from PsN -- see
+diagnostics, and the deliberate differences from PsN -- see
 [`docs/sir-technical-reference.md`](docs/sir-technical-reference.md).
 
 ## Credit where it's due

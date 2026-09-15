@@ -49,9 +49,30 @@ base measure has been chosen, and a measure that is flat in $\psi$ is not flat
 in a transform of $\psi$. **The target here is the normalized likelihood with
 respect to a flat measure on nlmixr2's own parameter scale** — the scale the
 `ini` block is written in. That choice is what the Box-Cox Jacobian in
-[Proposal update and Box-Cox](#proposal-update-and-box-cox) enforces, and it is
-what makes the retained distribution invariant to re-expressing the model in
-another smooth parameterization.
+[Proposal update and Box-Cox](#proposal-update-and-box-cox) enforces: the
+Jacobian makes Box-Cox an internal *proposal* transformation while preserving
+the normalized-likelihood target on nlmixr2's original parameter scale.
+
+It is worth being precise about what that does and does not buy, because the
+two are easy to conflate. If $x$ is the nlmixr parameter and $z = T(x)$ is only
+a proposal coordinate, the induced proposal density is
+
+$$
+q_x(x) = q_z(T(x))\,\left|T'(x)\right|,
+$$
+
+and dividing by that density targets $L(x)\,dx$. The answer therefore does not
+depend on the internal transform -- Box-Cox changes the efficiency of the
+proposal, not the estimand.
+
+Re-expressing the **model** is a different matter. If the model is rewritten in
+$y = h(x)$ and the estimand is again defined against a flat measure $dy$, then
+mapping that target back to $x$ introduces $\left|h'(x)\right|$. Flat
+normalized likelihood is a choice of base measure, not a parameterization-free
+object, so it is **not** invariant to redefining the model's parameter scale.
+Two models that are reparameterizations of each other can give different SIR
+intervals, and that is a property of the estimand rather than a defect in the
+implementation.
 
 ## Public interface
 
@@ -201,8 +222,28 @@ element estimated at zero.
 [`.sirCapCovCorrelation()`](../R/sir-utils.R) then clamps every off-diagonal
 correlation to $\pm$ `capCorrelation` (default 0.8) while holding the
 standard deviations fixed, and [`.sirEnsurePosDef()`](../R/sir-utils.R)
-symmetrises and floors the eigenvalues at $\sqrt{\varepsilon}$. Capping a
-correlation can itself destroy positive-definiteness, so the order matters.
+symmetrises and conditions the matrix. Capping a correlation can itself destroy
+positive-definiteness, so the order matters.
+
+The repair works in **standardized coordinates**, not raw ones. It divides out
+the marginal standard deviations, floors the eigenvalues of the resulting
+*correlation* matrix at `relTol * max(eigenvalue)` (with `relTol = 1e-12`),
+renormalizes to a unit diagonal, and maps back with the original standard
+deviations. Marginal variances therefore come back exactly as they went in, and
+only the correlation structure is conditioned.
+
+That matters because pharmacometric parameters do not share a unit. An
+eigenvalue test in raw coordinates measures the spread of the units as much as
+the spread of the information, so the same statistical problem gets a different
+verdict depending on how a parameter happens to be expressed: an absolute floor
+of $\sqrt{\varepsilon}$ once turned `diag(c(1, 1e-14))` into roughly
+`diag(c(1, 1e-12))`, inflating one parameter's variance a hundredfold because a
+*different* parameter happened to have variance one. A zero-variance coordinate
+carries no uncertainty, cannot be standardized, and is held at zero rather than
+being given uncertainty by the repair.
+
+The repair exists to clean roundoff on an already-full-rank matrix. Genuine
+rank deficiency is not repaired; it aborts.
 
 ## Sampling and rejection
 
@@ -210,7 +251,12 @@ correlation can itself destroy positive-definiteness, so the order matters.
 normal proposal in batches until $M$ valid vectors are collected or a budget
 of `maxAttemptFactor * M` draws is exhausted. A draw is rejected if:
 
-- back-transformation from the Box-Cox scale fails (`inverseRejected`);
+- back-transformation from the Box-Cox scale produces any non-finite value
+  (`inverseRejected`). This is tested with `!is.finite()`, not `is.na()`:
+  inversion can overflow to `Inf` without raising an error, and an infinite
+  value would otherwise pass the bounds test too, since `Inf > Inf` is `FALSE`.
+  A non-finite draw is an inverse failure whatever else is true of it, so it is
+  classified here, before any parameter-specific check;
 - any THETA or residual-error parameter falls outside its `iniDf` bounds
   (`thetaRejected`, `sigmaRejected`); or
 - the reconstructed OMEGA matrix is not positive-definite, tested by Cholesky
@@ -221,6 +267,42 @@ by element-wise bounds, which keeps the four rejection counts separable — they
 are reported per iteration and written to `sample_rejection_summary.txt`. A
 run that rejects heavily in one category is diagnosable; a single pooled count
 would not be.
+
+### The draw-attempt budget
+
+`maxAttemptFactor` is `10`, so the budget is `10 * M` draws for `M` requested
+samples. PsN uses `2000 * M`. This is a deliberate choice rather than an
+oversight: `runSIR()` is called interactively from an R session, where a
+proposal bad enough to reject 99.95% of draws is better reported quickly than
+ground through. On exhaustion the run warns with the attempted and successful
+counts and proceeds on however many samples it did collect, so a marginal case
+still produces a result -- it just says so.
+
+PsN additionally adjusts OMEGA and SIGMA blocks after prolonged rejection.
+`nlmixr2sir` does not. The consequence is concrete: a model whose OMEGA block
+sits near the positive-definite boundary will reject more draws here than under
+PsN, and may exhaust the budget where PsN would have continued. Widening the
+proposal with the inflation controls is the remedy.
+
+### Requested, attempted, collected, successful, usable, retained
+
+Six counts appear in the iteration summary and they are deliberately distinct:
+
+| Count | Column | Meaning |
+| --- | --- | --- |
+| Requested | `nSamples` | What the schedule asked for |
+| Attempted | `nAttempted` | After the turnout adjustment of the previous iteration |
+| Draw attempts | `nDrawAttempts` | Raw draws made, including rejected ones |
+| Collected | `nCollected` | Draws that survived rejection |
+| Successful | `nSuccessful` | Collected draws with a usable objective value |
+| Retained | `nResampled` | Distinct vectors actually kept by the resampler |
+
+A seventh, *usable*, sits between successful and retained: a finite dOFV does
+not guarantee a finite importance ratio, so only candidates with non-zero
+resampling probability can actually be drawn. Conflating any of these makes a
+failure report point at the wrong cause -- which is why an infeasible retained
+set now aborts naming how many candidates could be *scored*, rather than
+letting the rank check report the final count and advise raising `nResample`.
 
 ## Objective function evaluation
 
@@ -418,8 +500,12 @@ resulting curves.
 
 If the first iteration's proposal curve falls *below* the reference for more
 than a quarter of the quantiles, the proposal is too narrow. The vectors SIR
-would need were never drawn, and resampling cannot manufacture them. The run
-warns and recommends restarting with inflation. This check is based on PsN's.
+would need were never drawn, and resampling cannot manufacture them.
+
+The warning is emitted by [`plot()`](../R/sir-methods.R) when
+`type = "convergence"` is drawn, **not** by `runSIR()`. A run that is never
+plotted will not raise it, so treat the convergence plot as part of checking a
+run rather than as optional decoration. This check is based on PsN's.
 
 ### Intervals by iteration, and CI asymmetry
 
@@ -472,10 +558,31 @@ match `fit$cov` or the covariance is not positive-definite.
 
 State is written after every iteration, under a versioned schema. Alongside
 it goes a **run fingerprint**: the model text, a digest of the dataset and its
-row count, the estimated parameter set and estimates, the objective and
-estimation method, the sample/resample schedule, and a digest of the
-statistical controls. Worker and thread settings are excluded, because they
-do not change the answer and so must not invalidate a saved run.
+row count, the estimated parameter set, the parameter *schema* (kinds and
+bounds, not just names), a digest of the **resolved initial proposal** -- its
+covariance and mean after parsing and validation -- the estimates, the
+objective and estimation method, the cumulative sample/resample schedule, a
+state and algorithm version, and a digest of the statistical controls. Worker
+and thread settings are excluded, because they do not change the answer and so
+must not invalidate a saved run.
+
+Digesting the *resolved* proposal rather than the control object is what covers
+every input route at once. A control digest only ever captured a path string,
+so replacing the file at that path left the fingerprint unchanged, and a
+changed covariance could be reused as though it were the original.
+
+Comparison is field by field, so a mismatch names what moved rather than
+reporting an opaque hash difference. On the recovery path it **fails closed**:
+a field that cannot be digested blocks reuse rather than being skipped, because
+recovery is exactly the situation where inability to establish identity must
+not be read as permission. A fresh run is more forgiving, since an unusual fit
+should not be blocked because one field would not serialize.
+
+Package versions are recorded and warned about but **not** enforced. A
+dependency bump does not by itself invalidate a result, and a blanket
+requirement that every version match would be unnecessarily strict; but a
+version change can alter proposal construction, Box-Cox estimation or
+random-number behaviour, so it is never silent.
 
 `recover = TRUE` resumes from the last completed iteration, returning the
 stored result unchanged if the schedule was already finished -- but only after
@@ -486,12 +593,48 @@ is a provenance failure rather than a caching one.
 
 `addIterations = TRUE` appends further iterations to a completed run, carrying
 the existing iterations over rather than recomputing them. It exempts the
-schedule field, which it deliberately changes, and nothing else.
+schedule field from the identity comparison, which it deliberately changes, and
+nothing else.
+
+The schedule it *stores* is **cumulative**: the prior schedule plus the
+extension, covering every iteration the result contains. Storing the extension
+alone was a provenance failure rather than a cosmetic one -- a two-iteration run
+extended by one saved three completed iterations beside an identity describing
+a single iteration, so a later plain recovery presenting that one-iteration
+schedule matched and was handed the three-iteration result.
 
 Directories created by `runSIR()` carry a `sir_manifest.dcf` manifest. It is
-human-readable provenance, and it is also the ownership marker: `runSIR()`
-refuses to recursively clear a non-empty directory that does not have one, so
-an explicitly supplied `directory` cannot be destroyed by accident.
+human-readable provenance, and it is also the ownership marker.
+
+Ownership is established **before anything is written** -- before the seed file
+and before the manifest itself -- and on every path, not only when overwriting.
+That ordering is the point: writing the marker must not be what creates the
+ownership it later checks for. Under the default `recover = TRUE` an existing
+non-empty directory comes back in resume mode, and guarding only the overwrite
+path once let such a directory acquire a manifest and so become eligible for
+recursive deletion by the next run.
+
+The marker is validated by content, not by filename: the manifest is parsed and
+its package, prefix and state version checked. A foreign or malformed
+`sir_manifest.dcf` does not establish ownership. A non-empty directory without
+a valid manifest is refused outright rather than claimed, and failure to write
+a manifest is fatal, because the marker participates in the deletion policy.
+
+### Covariance repair provenance
+
+Two distinct repairs are recorded, because they happen at different points and
+mean different things:
+
+- `initialProposalRepair` on the result, and `proposalRepaired` per iteration,
+  describe the covariance that iteration actually *drew from*. Iteration 1's is
+  the run's initial-proposal record, and a resumed run reads it back rather
+  than losing it, since its iteration 1 is not re-run.
+- `posDefAdjusted` per iteration describes the repair applied to the *empirical
+  update* that iteration produced for the next one.
+
+Each record carries whether a repair was applied, the method, the threshold,
+and the magnitude -- the largest absolute change to any entry. The flag says a
+repair happened; the magnitude says whether it mattered.
 
 Seeding is managed per iteration through `nlmixr2utils::withRunSeed()`, so a
 resumed run reproduces the stream it would have had.
@@ -537,7 +680,19 @@ NONMEM-execution options — `-mceta`, `-copy_data`, `-problems_per_file`,
 `-nm_version` and similar — have no analogue. A per-option parity matrix is
 kept in the [README](../README.md).
 
-The deliberate differences are:
+**PsN is a comparator, not a specification.** It is an independently developed
+implementation of the same method, which makes it valuable in two narrower
+roles: as a source of exact numerical oracles for primitives both packages
+share, and as a source of workflow ideas and edge cases. It is not the
+normative definition of what `nlmixr2sir` should do. Where the two differ,
+the question is whether *this* package is mathematically coherent and does what
+it documents -- not whether it matches PsN. `nlmixr2sir` defines and tests its
+own statistical contract.
+
+The differences below are the ones that are known and deliberate. That is not a
+claim to have enumerated every divergence exhaustively; two independent
+implementations of a stochastic method will differ in ways neither author has
+catalogued. The deliberate differences are:
 
 - **The Box-Cox change-of-variables Jacobian**, described under
   [The change-of-variables Jacobian](#the-change-of-variables-jacobian). This
