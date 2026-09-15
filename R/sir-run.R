@@ -129,8 +129,14 @@ runSIR <- function(
   # unchanged path.
   initial <- .sirResolveInitialProposal(fit, ps, control)
 
+  # The schedule this call asks for. For a fresh run or a plain recovery it is
+  # also the whole schedule; addIterations replaces it below with the prior
+  # schedule plus this extension, because the result will contain both.
+  request_schedule <- .sirSchedule(nSamples, nResample)
+  cumulative_schedule <- request_schedule
+
   fingerprint <- .sirRunFingerprint(
-    fit, ps, nSamples, nResample, control,
+    fit, ps, request_schedule, control,
     initial = initial
   )
 
@@ -175,6 +181,34 @@ runSIR <- function(
       nlmixr2utils::readRunState(output_dir, .sirStateSchema())
     } else {
       NULL
+    }
+
+    # An extended run contains the prior iterations and this extension, so its
+    # identity has to describe both. Recorded before the manifest is written,
+    # because the manifest carries the schedule too.
+    #
+    # This does not weaken the identity check below: addIterations exempts the
+    # schedule field from comparison, and on every other path the cumulative
+    # schedule is the requested one.
+    if (!is.null(saved_state) && isTRUE(addIterations)) {
+      prior_schedule <- saved_state$schedule
+      if (is.null(prior_schedule)) {
+        # States written before the schedule was persisted. The per-iteration
+        # summary has always carried the requested counts, so rebuild from it
+        # rather than refusing to extend an otherwise valid run.
+        prior_schedule <- data.frame(
+          iter = saved_state$iterationSummary$iter,
+          nSamples = as.integer(saved_state$iterationSummary$nSamples),
+          nResample = as.integer(saved_state$iterationSummary$nResample)
+        )
+      }
+      extension <- .sirSchedule(nSamples, nResample)
+      extension$iter <- nrow(prior_schedule) + extension$iter
+      cumulative_schedule <- rbind(prior_schedule, extension)
+      fingerprint <- .sirRunFingerprint(
+        fit, ps, cumulative_schedule, control,
+        initial = initial
+      )
     }
 
     # Whatever is on disk has to belong to the run being asked for. Extending a
@@ -356,6 +390,7 @@ runSIR <- function(
       output_dir,
       list(
         fingerprint = fingerprint,
+        schedule = cumulative_schedule,
         proposalSource = proposal_source,
         referenceOfvHistory = reference_ofv_history,
         completedIterations = iter_num,
@@ -409,11 +444,7 @@ runSIR <- function(
   # .rds can still say what produced it and the diagnostics can describe the
   # algorithm that actually ran rather than assuming defaults.
   attr(summary_df, "control") <- control
-  attr(summary_df, "schedule") <- data.frame(
-    iter = seq_along(nSamples),
-    nSamples = nSamples,
-    nResample = nResample
-  )
+  attr(summary_df, "schedule") <- cumulative_schedule
   attr(summary_df, "proposalSource") <- proposal_source
   attr(summary_df, "referenceOfvHistory") <- reference_ofv_history
   attr(summary_df, "fingerprint") <- fingerprint
@@ -424,6 +455,7 @@ runSIR <- function(
       output_dir,
       list(
         fingerprint = fingerprint,
+        schedule = cumulative_schedule,
         proposalSource = proposal_source,
         referenceOfvHistory = reference_ofv_history,
         completedIterations = tail(iter_summary$iter, 1L),

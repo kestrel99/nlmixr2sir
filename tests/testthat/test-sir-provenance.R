@@ -15,8 +15,8 @@ test_that("the run fingerprint is deterministic for identical inputs", {
   fit <- theoFit()
   ps <- .sirParamSpace(fit)
   ctl <- runSIRControl(workers = 1L)
-  a <- .sirRunFingerprint(fit, ps, 16L, 8L, ctl)
-  b <- .sirRunFingerprint(fit, ps, 16L, 8L, ctl)
+  a <- .sirRunFingerprint(fit, ps, .sirSchedule(16L, 8L), ctl)
+  b <- .sirRunFingerprint(fit, ps, .sirSchedule(16L, 8L), ctl)
   expect_identical(a, b)
   expect_true(is.integer(a$stateVersion) || is.numeric(a$stateVersion))
 })
@@ -25,19 +25,19 @@ test_that("the fingerprint changes when the schedule or controls change", {
   skip_on_cran()
   fit <- theoFit()
   ps <- .sirParamSpace(fit)
-  base <- .sirRunFingerprint(fit, ps, 16L, 8L, runSIRControl(workers = 1L))
+  base <- .sirRunFingerprint(fit, ps, .sirSchedule(16L, 8L), runSIRControl(workers = 1L))
 
-  sched <- .sirRunFingerprint(fit, ps, 24L, 8L, runSIRControl(workers = 1L))
+  sched <- .sirRunFingerprint(fit, ps, .sirSchedule(24L, 8L), runSIRControl(workers = 1L))
   expect_false(identical(base$schedule, sched$schedule))
 
   ctl <- .sirRunFingerprint(
-    fit, ps, 16L, 8L, runSIRControl(workers = 1L, boxcox = FALSE)
+    fit, ps, .sirSchedule(16L, 8L), runSIRControl(workers = 1L, boxcox = FALSE)
   )
   expect_false(identical(base$controls, ctl$controls))
 
   # Parallelism does not change the answer, so it must not invalidate a run.
   par <- .sirRunFingerprint(
-    fit, ps, 16L, 8L, runSIRControl(workers = 1L, rxThreads = 2L)
+    fit, ps, .sirSchedule(16L, 8L), runSIRControl(workers = 1L, rxThreads = 2L)
   )
   expect_identical(base$controls, par$controls)
 })
@@ -45,10 +45,10 @@ test_that("the fingerprint changes when the schedule or controls change", {
 test_that("the fingerprint distinguishes different models and data", {
   skip_on_cran()
   a <- .sirRunFingerprint(
-    theoFit(), .sirParamSpace(theoFit()), 16L, 8L, runSIRControl(workers = 1L)
+    theoFit(), .sirParamSpace(theoFit()), .sirSchedule(16L, 8L), runSIRControl(workers = 1L)
   )
   b <- .sirRunFingerprint(
-    blockFit(), .sirParamSpace(blockFit()), 16L, 8L, runSIRControl(workers = 1L)
+    blockFit(), .sirParamSpace(blockFit()), .sirSchedule(16L, 8L), runSIRControl(workers = 1L)
   )
   expect_false(identical(a$model, b$model))
   expect_false(identical(a$params, b$params))
@@ -58,8 +58,8 @@ test_that(".sirCompareFingerprints reports mismatched fields by name", {
   skip_on_cran()
   fit <- theoFit()
   ps <- .sirParamSpace(fit)
-  a <- .sirRunFingerprint(fit, ps, 16L, 8L, runSIRControl(workers = 1L))
-  b <- .sirRunFingerprint(fit, ps, 24L, 8L, runSIRControl(workers = 1L, boxcox = FALSE))
+  a <- .sirRunFingerprint(fit, ps, .sirSchedule(16L, 8L), runSIRControl(workers = 1L))
+  b <- .sirRunFingerprint(fit, ps, .sirSchedule(24L, 8L), runSIRControl(workers = 1L, boxcox = FALSE))
 
   bad <- .sirCompareFingerprints(a, b)
   expect_true("schedule" %in% bad)

@@ -17,7 +17,7 @@ test_that("the fingerprint covers the resolved proposal contents", {
   ctl <- runSIRControl(workers = 1L)
   initial <- .sirResolveInitialProposal(fit, ps, ctl)
 
-  fp <- .sirRunFingerprint(fit, ps, 16L, 8L, ctl, initial = initial)
+  fp <- .sirRunFingerprint(fit, ps, .sirSchedule(16L, 8L), ctl, initial = initial)
   expect_true("proposal" %in% names(fp))
   expect_false(is.na(fp$proposal))
 
@@ -25,7 +25,7 @@ test_that("the fingerprint covers the resolved proposal contents", {
   # else identical.
   moved <- initial
   moved$covMat <- moved$covMat * 2
-  fp2 <- .sirRunFingerprint(fit, ps, 16L, 8L, ctl, initial = moved)
+  fp2 <- .sirRunFingerprint(fit, ps, .sirSchedule(16L, 8L), ctl, initial = moved)
   expect_false(identical(fp$proposal, fp2$proposal))
   expect_true("proposal" %in% .sirCompareFingerprints(fp, fp2))
 })
@@ -35,7 +35,7 @@ test_that("the fingerprint covers the parameter schema, not just names", {
   fit <- theoFit()
   ps <- .sirParamSpace(fit)
   ctl <- runSIRControl(workers = 1L)
-  fp <- .sirRunFingerprint(fit, ps, 16L, 8L, ctl)
+  fp <- .sirRunFingerprint(fit, ps, .sirSchedule(16L, 8L), ctl)
   expect_true("paramSchema" %in% names(fp))
 
   # Same names, different bounds: a different estimation problem. Use a
@@ -45,7 +45,7 @@ test_that("the fingerprint covers the parameter schema, not just names", {
   ps2$lower[1L] <- -5
   ps2$upper[1L] <- 5
   expect_false(identical(ps$lower, ps2$lower))
-  fp2 <- .sirRunFingerprint(fit, ps2, 16L, 8L, ctl)
+  fp2 <- .sirRunFingerprint(fit, ps2, .sirSchedule(16L, 8L), ctl)
   expect_true("paramSchema" %in% .sirCompareFingerprints(fp, fp2))
 })
 
@@ -71,14 +71,14 @@ test_that("changing a covariance file's contents changes the fingerprint", {
   writeMat(diag(p) * 0.01)
   ctl <- runSIRControl(covmatInput = path, workers = 1L)
   fpA <- .sirRunFingerprint(
-    fit, ps, 16L, 8L, ctl,
+    fit, ps, .sirSchedule(16L, 8L), ctl,
     initial = .sirResolveInitialProposal(fit, ps, ctl)
   )
 
   # Same path, different numbers.
   writeMat(diag(p) * 0.05)
   fpB <- .sirRunFingerprint(
-    fit, ps, 16L, 8L, ctl,
+    fit, ps, .sirSchedule(16L, 8L), ctl,
     initial = .sirResolveInitialProposal(fit, ps, ctl)
   )
 
@@ -103,7 +103,7 @@ test_that("the algorithm version is an identity field", {
   skip_on_cran()
   fit <- theoFit()
   ps <- .sirParamSpace(fit)
-  fp <- .sirRunFingerprint(fit, ps, 16L, 8L, runSIRControl(workers = 1L))
+  fp <- .sirRunFingerprint(fit, ps, .sirSchedule(16L, 8L), runSIRControl(workers = 1L))
   expect_true("algoVersion" %in% names(fp))
 
   stale <- fp

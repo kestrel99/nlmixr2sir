@@ -54,8 +54,23 @@
 # asked for. Stored alongside the state so recovery can refuse a mismatch and
 # name the field that moved, rather than returning a stale result under a new
 # label.
-.sirRunFingerprint <- function(fit, ps, nSamples, nResample, control,
-                              initial = NULL) {
+# A schedule frame from the two vectors runSIR() is called with. One
+# constructor so the result attribute, the saved state and the fingerprint
+# cannot drift into different shapes.
+.sirSchedule <- function(nSamples, nResample) {
+  data.frame(
+    iter = seq_along(nSamples),
+    nSamples = as.integer(nSamples),
+    nResample = as.integer(nResample)
+  )
+}
+
+# `schedule` is a data frame of iter/nSamples/nResample covering every iteration
+# the run will contain -- for an extended run that is the prior schedule plus
+# the extension, not the extension alone. Taking the frame rather than the two
+# vectors is what keeps the saved identity and the result's schedule attribute
+# from drifting apart.
+.sirRunFingerprint <- function(fit, ps, schedule, control, initial = NULL) {
   # fit$ui$funTxt is the model block as text, which is what distinguishes one
   # structural model from another. fit$uiFun is NULL on a fitted object, so
   # deparsing it yields the string "NULL" for every fit -- which silently made
@@ -124,9 +139,9 @@
     objf = .sirDigest(round(as.numeric(fit$objf), 8L)),
     estMethod = as.character(fit$est %||% NA_character_),
     schedule = paste0(
-      paste(as.integer(nSamples), collapse = ","),
+      paste(as.integer(schedule$nSamples), collapse = ","),
       "/",
-      paste(as.integer(nResample), collapse = ",")
+      paste(as.integer(schedule$nResample), collapse = ",")
     ),
     controls = .sirDigest(control[.sirStatisticalControls]),
     pkgVersions = paste(

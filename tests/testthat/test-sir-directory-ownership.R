@@ -111,7 +111,7 @@ test_that("a manifest this package wrote does authorize deletion", {
   .sirWriteManifest(
     dir,
     .sirRunFingerprint(
-      theoFit(), .sirParamSpace(theoFit()), 16L, 8L, runSIRControl(workers = 1L)
+      theoFit(), .sirParamSpace(theoFit()), .sirSchedule(16L, 8L), runSIRControl(workers = 1L)
     ),
     fitName = "theoFit"
   )
@@ -125,7 +125,7 @@ test_that("a manifest that cannot be written is fatal", {
   # not continue as though it had.
   dir <- withr::local_tempdir()
   fp <- .sirRunFingerprint(
-    theoFit(), .sirParamSpace(theoFit()), 16L, 8L, runSIRControl(workers = 1L)
+    theoFit(), .sirParamSpace(theoFit()), .sirSchedule(16L, 8L), runSIRControl(workers = 1L)
   )
   expect_error(
     .sirWriteManifest(
