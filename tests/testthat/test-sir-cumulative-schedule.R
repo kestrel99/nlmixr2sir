@@ -11,7 +11,7 @@ test_that("extending a run yields a cumulative schedule everywhere", {
   dir <- withr::local_tempdir()
 
   set.seed(42)
-  first <- suppressMessages(runSIR(
+  first <- .sirQuiet(runSIR(
     fit,
     nSamples = c(16L, 16L),
     nResample = c(8L, 8L),
@@ -21,7 +21,7 @@ test_that("extending a run yields a cumulative schedule everywhere", {
   expect_equal(nrow(attr(first, "schedule")), 2L)
 
   set.seed(42)
-  second <- suppressMessages(runSIR(
+  second <- .sirQuiet(runSIR(
     fit,
     nSamples = 16L,
     nResample = 8L,
@@ -51,7 +51,7 @@ test_that("a recover request with the extension schedule alone is refused", {
   dir <- withr::local_tempdir()
 
   set.seed(42)
-  suppressMessages(runSIR(
+  .sirQuiet(runSIR(
     fit,
     nSamples = c(16L, 16L),
     nResample = c(8L, 8L),
@@ -59,7 +59,7 @@ test_that("a recover request with the extension schedule alone is refused", {
     control = runSIRControl(workers = 1L)
   ))
   set.seed(42)
-  suppressMessages(runSIR(
+  .sirQuiet(runSIR(
     fit,
     nSamples = 16L,
     nResample = 8L,
@@ -71,7 +71,7 @@ test_that("a recover request with the extension schedule alone is refused", {
   # extension, so this matched and returned the three-iteration result as
   # though it were the answer to a one-iteration request.
   expect_error(
-    suppressMessages(runSIR(
+    .sirQuiet(runSIR(
       fit,
       nSamples = 16L,
       nResample = 8L,

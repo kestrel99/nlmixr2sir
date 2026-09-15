@@ -9,7 +9,7 @@ test_that("runSIR writes the complete artifact set", {
   on.exit(unlink(tmp, recursive = TRUE), add = TRUE)
 
   set.seed(20260913)
-  res <- suppressMessages(runSIR(
+  res <- .sirQuiet(runSIR(
     theoFit(),
     nSamples = c(16L, 16L),
     nResample = c(8L, 8L),
@@ -43,7 +43,7 @@ test_that("the written summary round-trips back through read.csv", {
   tmp <- tempfile("sir_e2e_")
   on.exit(unlink(tmp, recursive = TRUE), add = TRUE)
   set.seed(1)
-  res <- suppressMessages(runSIR(
+  res <- .sirQuiet(runSIR(
     theoFit(),
     nSamples = 16L,
     nResample = 8L,
@@ -64,7 +64,7 @@ test_that("recover returns the completed run instead of repeating it", {
   on.exit(unlink(tmp, recursive = TRUE), add = TRUE)
 
   set.seed(42)
-  first <- suppressMessages(runSIR(
+  first <- .sirQuiet(runSIR(
     theoFit(),
     nSamples = c(16L, 16L),
     nResample = c(8L, 8L),
@@ -76,7 +76,7 @@ test_that("recover returns the completed run instead of repeating it", {
   # Same schedule, same directory, recover = TRUE: the stored result comes
   # back rather than the model being evaluated again.
   set.seed(999)
-  again <- suppressMessages(runSIR(
+  again <- .sirQuiet(runSIR(
     theoFit(),
     nSamples = c(16L, 16L),
     nResample = c(8L, 8L),
@@ -94,7 +94,7 @@ test_that("addIterations extends a completed run", {
   on.exit(unlink(tmp, recursive = TRUE), add = TRUE)
 
   set.seed(7)
-  first <- suppressMessages(runSIR(
+  first <- .sirQuiet(runSIR(
     theoFit(),
     nSamples = c(16L, 16L),
     nResample = c(8L, 8L),
@@ -103,7 +103,7 @@ test_that("addIterations extends a completed run", {
   ))
   expect_equal(nrow(attr(first, "iterationSummary")), 2L)
 
-  extended <- suppressMessages(runSIR(
+  extended <- .sirQuiet(runSIR(
     theoFit(),
     nSamples = 16L,
     nResample = 8L,
@@ -125,7 +125,7 @@ test_that("every diagnostic plot builds from a real run", {
   tmp <- tempfile("sir_plots_")
   on.exit(unlink(tmp, recursive = TRUE), add = TRUE)
   set.seed(5)
-  res <- suppressMessages(runSIR(
+  res <- .sirQuiet(runSIR(
     theoFit(),
     nSamples = c(20L, 20L),
     nResample = c(10L, 10L),
@@ -150,7 +150,7 @@ test_that("print() works on a real run", {
   tmp <- tempfile("sir_print_")
   on.exit(unlink(tmp, recursive = TRUE), add = TRUE)
   set.seed(6)
-  res <- suppressMessages(runSIR(
+  res <- .sirQuiet(runSIR(
     theoFit(),
     nSamples = 16L,
     nResample = 8L,

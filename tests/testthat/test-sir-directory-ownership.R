@@ -127,10 +127,13 @@ test_that("a manifest that cannot be written is fatal", {
   fp <- .sirRunFingerprint(
     theoFit(), .sirParamSpace(theoFit()), .sirSchedule(16L, 8L), runSIRControl(workers = 1L)
   )
+  # suppressWarnings() covers base R's own "cannot open file" warning from
+  # write.dcf, which fires on the way to the error. The error is the subject
+  # here; the warning is incidental and is not a condition this package raises.
   expect_error(
-    .sirWriteManifest(
+    suppressWarnings(.sirWriteManifest(
       file.path(dir, "no", "such", "directory"), fp, fitName = "theoFit"
-    ),
+    )),
     "manifest"
   )
 })

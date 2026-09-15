@@ -962,7 +962,7 @@ test_that("sirRunIteration recentering: newMu shifts when a better sample exists
   mu_perturbed <- .sirProposalMu(theoFit()) + 0.5
   prop_cov <- sirGetProposalCov(theoFit())
   set.seed(1)
-  res <- suppressMessages(
+  res <- .sirQuiet(
     sirRunIteration(
       theoFit(),
       mu = mu_perturbed,
@@ -993,7 +993,7 @@ test_that("sirRunIteration keeps raw results in memory when directory is provide
   on.exit(unlink(tmp_dir, recursive = TRUE), add = TRUE)
 
   set.seed(9)
-  res <- suppressMessages(
+  res <- .sirQuiet(
     sirRunIteration(
       theoFit(),
       mu = mu,
@@ -1015,7 +1015,7 @@ test_that("sirRunIteration keeps raw results in memory when directory is provide
 test_that("sirRunIteration chained: iter 2 accepts boxcoxState from iter 1", {
   skip_on_cran()
   set.seed(77)
-  res2 <- suppressMessages(
+  res2 <- .sirQuiet(
     sirRunIteration(
       theoFit(),
       mu = iter1()$newMu,
@@ -1397,7 +1397,7 @@ test_that("sirSummary reports rse_sd_scale only for OMEGA diagonals", {
   ps <- .sirParamSpace(fit)
   # blockFit has 7 estimated parameters, so 8 retained vectors would give a
   # covariance of rank exactly 7 -- no margin for a repeated draw.
-  it <- suppressMessages(sirRunIteration(
+  it <- .sirQuiet(sirRunIteration(
     fit,
     mu = .sirProposalMu(fit),
     proposalCov = sirGetProposalCov(fit),

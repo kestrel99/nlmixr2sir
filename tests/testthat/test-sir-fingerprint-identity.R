@@ -116,7 +116,7 @@ test_that("recovery refuses a mutated fit covariance", {
   fit <- theoFit()
   dir <- withr::local_tempdir()
   set.seed(81)
-  suppressMessages(runSIR(
+  .sirQuiet(runSIR(
     fit, nSamples = 16L, nResample = 8L, directory = dir,
     control = runSIRControl(recover = FALSE, workers = 1L)
   ))
@@ -128,7 +128,7 @@ test_that("recovery refuses a mutated fit covariance", {
   nlmixr2utils::writeRunState(dir, st, .sirStateSchema())
 
   err <- tryCatch(
-    suppressMessages(runSIR(
+    .sirQuiet(runSIR(
       fit, nSamples = 16L, nResample = 8L, directory = dir,
       control = runSIRControl(recover = TRUE, workers = 1L)
     )),
@@ -142,7 +142,7 @@ test_that("recovery refuses state whose identity cannot be established", {
   fit <- theoFit()
   dir <- withr::local_tempdir()
   set.seed(82)
-  suppressMessages(runSIR(
+  .sirQuiet(runSIR(
     fit, nSamples = 16L, nResample = 8L, directory = dir,
     control = runSIRControl(recover = FALSE, workers = 1L)
   ))
@@ -152,7 +152,7 @@ test_that("recovery refuses state whose identity cannot be established", {
   nlmixr2utils::writeRunState(dir, st, .sirStateSchema())
 
   err <- tryCatch(
-    suppressMessages(runSIR(
+    .sirQuiet(runSIR(
       fit, nSamples = 16L, nResample = 8L, directory = dir,
       control = runSIRControl(recover = TRUE, workers = 1L)
     )),
@@ -166,7 +166,7 @@ test_that("a dependency version change warns but does not block recovery", {
   fit <- theoFit()
   dir <- withr::local_tempdir()
   set.seed(83)
-  suppressMessages(runSIR(
+  .sirQuiet(runSIR(
     fit, nSamples = 16L, nResample = 8L, directory = dir,
     control = runSIRControl(recover = FALSE, workers = 1L)
   ))
@@ -176,7 +176,7 @@ test_that("a dependency version change warns but does not block recovery", {
   nlmixr2utils::writeRunState(dir, st, .sirStateSchema())
 
   expect_warning(
-    suppressMessages(runSIR(
+    .sirQuiet(runSIR(
       fit, nSamples = 16L, nResample = 8L, directory = dir,
       control = runSIRControl(recover = TRUE, workers = 1L)
     )),

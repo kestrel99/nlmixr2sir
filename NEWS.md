@@ -42,6 +42,78 @@
   and note that percentile intervals from a likelihood-weighted sample do not
   automatically have nominal frequentist coverage.
 
+## Run identity, feasibility and robustness
+
+* **Added iterations now keep a cumulative schedule.** `addIterations = TRUE`
+  stored only the extension schedule, so a two-iteration run extended by one
+  saved three completed iterations beside an identity describing a single
+  iteration. A later plain `recover` request presenting that one-iteration
+  schedule matched and was handed the three-iteration result. The stored
+  schedule, the result's `schedule` attribute and the saved fingerprint now all
+  describe every iteration the result contains.
+
+* **Infeasible schedules are rejected before any model is evaluated.**
+  `runSIR()` checked only `nResample <= nParameters`. Two further
+  impossibilities are knowable in advance: `nSamples <= nParameters` (a
+  candidate must be drawn before it can be retained), and
+  `nResample > nSamples * capResampling` (under limited replacement each
+  candidate fills at most `capResampling` slots). The first previously surfaced
+  only after a full round of model evaluations, advising that `nResample` be
+  raised when `nResample` was not the problem; the second was silently clamped.
+
+* **An infeasible retained set now aborts naming its cause.** Failed
+  evaluations and the turnout and cap clamps can leave fewer usable candidates
+  than the proposal update needs, on a schedule that was feasible as requested.
+  This reached the rank check, which saw only the final count and advised
+  raising `nResample`. It now reports how many candidates could actually be
+  scored.
+
+* **Non-finite inverse Box-Cox results are classified as inverse failures.**
+  The filter used `is.na()`, and inversion can overflow to `Inf` without
+  raising an error. Since `Inf > Inf` is `FALSE`, such a value also passed the
+  bounds test, so it was charged to whichever check happened to reject it next
+  -- or, absent one, entered the sample and reached objective evaluation.
+
+* **The Box-Cox shift now protects the centre it will transform.** The shift
+  was chosen from the retained sample alone. Under `recenter = TRUE` the next
+  centre is the best candidate, which need not be among the retained rows and
+  can lie below their minimum, making `mu + delta <= 0` and aborting a run that
+  was proceeding normally.
+
+* **Initial proposal covariance repair is recorded.** Only the repair of later
+  empirical updates was stored. The repair of the covariance that iteration 1
+  draws from is now kept on the result and in the run state, with its method,
+  threshold and magnitude, and survives a resume. The iteration summary
+  distinguishes `proposalRepaired` (the covariance that iteration drew from)
+  from `posDefAdjusted` (the empirical update it produced for the next one).
+
+* The convergence noise band is built from normalized resampling probabilities
+  rather than raw importance ratios. `importance_ratio = exp(log_ir)` can
+  overflow to `Inf` on a strongly favoured candidate, and filtering on it
+  discarded exactly the candidate carrying the weight.
+
+## Documentation
+
+* **Corrected an incorrect claim about parameterization invariance.** The
+  README and technical reference stated that including the Box-Cox
+  change-of-variables Jacobian makes the retained distribution invariant to
+  re-expressing the *model* in another smooth parameterization. It does not.
+  The Jacobian makes Box-Cox an internal *proposal* transformation, so the
+  result does not depend on that transform; but flat normalized likelihood is a
+  choice of base measure, and two models that are reparameterizations of each
+  other can give different SIR intervals. Both documents now say so.
+
+* The technical reference described a `sqrt(.Machine$double.eps)` eigenvalue
+  floor that the code no longer uses, and attributed the narrow-proposal
+  warning to `runSIR()` when it is emitted by `plot(type = "convergence")`.
+  Both corrected.
+
+* PsN is now described as a comparator and a source of numerical oracles rather
+  than as the specification, and the claim to enumerate every deliberate
+  difference is replaced. The draw-attempt budget (`10 * nSamples` against
+  PsN's `2000 * nSamples`) and the absent OMEGA/SIGMA block adjustment are
+  documented as deliberate choices.
+
 ## Correctness fixes
 
 * **Importance weights were wrong for correlated proposals.** `sirCalcWeights()`

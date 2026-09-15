@@ -169,7 +169,10 @@ sirObj <- .sirLazy(local({
 sirRawResultsPath <- .sirLazy(local({
   dir <- file.path(tempdir(), "sir_rawres_fixture")
   set.seed(1)
-  suppressMessages(runSIR(
+  # .sirQuiet(), not suppressMessages(): this fixture is lazy, so its
+  # degeneracy warning would otherwise be charged to whichever test happens to
+  # touch it first.
+  .sirQuiet(runSIR(
     theoFit(),
     nSamples = 12L,
     nResample = 8L,
@@ -178,3 +181,29 @@ sirRawResultsPath <- .sirLazy(local({
   ))
   file.path(dir, "raw_results.csv")
 }))
+
+# Run an expression quietly, muffling ONLY the weight-degeneracy warning.
+#
+# Every fit-based fixture here is deliberately tiny, and small SIR runs on a
+# 5-parameter model concentrate their weights -- which is exactly what the S1
+# diagnostics exist to report. In a test about schedules, ownership or
+# fingerprints that warning is noise, and noise is what hides a genuinely new
+# warning. It is asserted directly where it is the subject, in
+# test-sir-weight-diagnostics.R.
+#
+# Note this is NOT suppressWarnings(): any other warning still surfaces and
+# still fails a suite that is expected to be quiet. Resizing the fixtures is
+# not an alternative -- essFraction is ESS/n and falls as n rises on these
+# models (0.54 at n = 16 against 0.02 at n = 500), so a bigger fixture warns
+# harder, not less.
+.sirQuiet <- function(expr) {
+  withCallingHandlers(
+    suppressMessages(expr),
+    warning = function(w) {
+      if (grepl("importance weights are concentrated", conditionMessage(w),
+                fixed = TRUE)) {
+        invokeRestart("muffleWarning")
+      }
+    }
+  )
+}
