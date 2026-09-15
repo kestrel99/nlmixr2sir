@@ -17,16 +17,29 @@
 #'
 #' @param x Numeric vector (length ≥ 2), no missing values.
 #' @param lambda `NULL` to estimate, or a finite numeric scalar.
-#' @param delta `NULL` to compute as `|min(x)| + 1e-6`, or a non-negative
-#'   scalar.  Must ensure `x + delta > 0`.
+#' @param delta `NULL` to compute as `|min(c(x, mustAdmit))| + 1e-6`, or a
+#'   non-negative scalar.  Must ensure `x + delta > 0`.
+#' @param mustAdmit Optional numeric. Extra values the chosen shift must also
+#'   place strictly inside the transform domain, without being transformed
+#'   themselves. The next proposal centre is passed here: under `recenter` it
+#'   is the best candidate, which need not be one of the retained vectors and
+#'   can sit below their minimum.
 #' @return Named list: `transformed` (numeric vector), `lambda` (scalar),
 #'   `delta` (scalar).
 #' @noRd
-sirBoxCox <- function(x, lambda = NULL, delta = NULL) {
+sirBoxCox <- function(x, lambda = NULL, delta = NULL, mustAdmit = NULL) {
   checkmate::assertNumeric(x, min.len = 2L, any.missing = FALSE, finite = TRUE)
 
   if (is.null(delta)) {
-    delta <- abs(min(x)) + 1e-6
+    # mustAdmit widens the shift and nothing else: it is not transformed here.
+    # Choosing the shift from the sample alone let a recentred mean below the
+    # sample minimum fall outside the domain, and .sirBcTransformMu() then
+    # aborted on a run that was otherwise proceeding normally.
+    checkmate::assertNumeric(
+      mustAdmit,
+      any.missing = FALSE, finite = TRUE, null.ok = TRUE
+    )
+    delta <- abs(min(c(x, mustAdmit))) + 1e-6
   }
   checkmate::assertNumber(delta, lower = 0, finite = TRUE)
 
@@ -114,7 +127,8 @@ sirBoxCoxInverse <- function(x_transformed, lambda, delta) {
 sirUpdateProposal <- function(
   resampledMat,
   boxcox = TRUE,
-  capCorrelation = 0.8
+  capCorrelation = 0.8,
+  centre = NULL
 ) {
   checkmate::assertMatrix(
     resampledMat,
@@ -135,7 +149,17 @@ sirUpdateProposal <- function(
   n_col <- ncol(resampledMat)
 
   if (boxcox) {
-    bc_list <- lapply(seq_len(n_col), function(j) sirBoxCox(resampledMat[, j]))
+    # The shift for each column must admit the centre that will later be
+    # transformed with these same parameters, so the two cannot disagree.
+    bc_list <- lapply(seq_len(n_col), function(j) {
+      nm <- if (is.null(param_names)) NULL else param_names[[j]]
+      admit <- if (is.null(centre) || is.null(nm) || !nm %in% names(centre)) {
+        NULL
+      } else {
+        unname(centre[[nm]])
+      }
+      sirBoxCox(resampledMat[, j], mustAdmit = admit)
+    })
 
     trans_mat <- matrix(
       unlist(lapply(bc_list, `[[`, "transformed")),

@@ -231,7 +231,10 @@ sirRunIteration <- function(
   updated <- sirUpdateProposal(
     resampled$samples[, param_names, drop = FALSE],
     boxcox = boxcox && !isLastIteration,
-    capCorrelation = capCorrelation
+    capCorrelation = capCorrelation,
+    # The centre the next iteration will transform with these very parameters.
+    # Under recenter it is the best candidate, not necessarily a retained row.
+    centre = new_mu
   )
   new_cov <- updated$covMat
   new_bc_state <- updated$boxcoxParams # NULL when boxcox = FALSE
