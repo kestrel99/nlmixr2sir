@@ -107,8 +107,8 @@ print.nlmixr2SIR <- function(x, ..., digits = 3) {
 #'   at each iteration -- showing whether the uncertainty has stopped moving --
 #'   `"rsecor"` is the RSE/correlation matrix with the diagonal annotated by
 #'   CI asymmetry, and `"convergence"` is the dOFV-versus-chi-square plot: per iteration,
-#'   the empirical dOFV quantile curve for the proposal and for the SIR
-#'   posterior against a reference chi-square on the number of estimated
+#'   the empirical dOFV quantile curve for the proposal and for the retained
+#'   SIR distribution against a reference chi-square on the number of estimated
 #'   parameters. Convergence reads as the SIR curve settling onto the
 #'   reference.
 #' @param noise Logical. Draw a resampling-noise band on the last two
@@ -116,7 +116,8 @@ print.nlmixr2SIR <- function(x, ..., digits = 3) {
 #' @param nReplicate Number of resampling replicates behind that band.
 #' @param ci Interval width, as a percentage, for `type = "intervals"` and for
 #'   the asymmetry annotation on `type = "rsecor"`.
-#' @param which For `type = "rsecor"`, whether to show the final SIR posterior
+#' @param which For `type = "rsecor"`, whether to show the final retained SIR
+#'   distribution
 #'   (`"SIR"`, the default) or the first iteration's proposal.
 #' @param bins Number of histogram bins for parameter and dOFV plots.
 #' @param ... Unused.

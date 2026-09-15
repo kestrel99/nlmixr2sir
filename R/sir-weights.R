@@ -23,6 +23,12 @@
 #'   dimension as `length(mu)`).
 #' @param dOFV Numeric vector of length `nrow(samples)`.
 #'   `dOFV[i] = OFV_sample[i] - OFV_original`.  May contain `NA`.
+#' @param logJacobian `NULL`, or a numeric vector of length `nrow(samples)`
+#'   giving `log|det J(x_i)| - log|det J(mu)|` for the map from the sampling
+#'   coordinates to the original parameter scale.  Supplied when Box-Cox is
+#'   active, so that `relPDF` is the proposal density induced on the original
+#'   scale rather than the density of the sampling coordinates.  `NULL` means
+#'   the two scales coincide.
 #' @return Data frame with one row per sample and columns:
 #'   \describe{
 #'     \item{`sample_id`}{Integer row index.}
@@ -33,30 +39,57 @@
 #'     \item{`prob_resample`}{Normalised resampling probability; 0 for `NA` rows.}
 #'   }
 #' @noRd
-sirCalcWeights <- function(samples, mu, covMat, dOFV) {
+sirCalcWeights <- function(samples, mu, covMat, dOFV, logJacobian = NULL) {
   n <- nrow(samples)
   p <- ncol(samples)
   checkmate::assertMatrix(samples, mode = "numeric", min.rows = 1L)
   checkmate::assertNumeric(mu, finite = TRUE, any.missing = FALSE, len = p)
   checkmate::assertMatrix(covMat, mode = "numeric", nrows = p, ncols = p)
   checkmate::assertNumeric(dOFV, len = n)
+  if (!is.null(logJacobian)) {
+    checkmate::assertNumeric(logJacobian, len = n)
+  }
 
-  L <- tryCatch(
+  # chol() returns the UPPER factor U, with t(U) %*% U == covMat.
+  U <- tryCatch(
     chol(covMat),
     error = function(e) {
       cli::cli_abort("{.arg covMat} is not positive definite.")
     }
   )
 
-  # log(relPDF_i) = -0.5 * ||L^{-T}(x_i - mu)||^2; equals 0 when x_i = mu.
+  # log(relPDF_i) = -0.5 * ||U^{-T}(x_i - mu)||^2; equals 0 when x_i = mu.
+  #
+  # The solve must be against t(U), hence transpose = TRUE: the Mahalanobis
+  # form is d' covMat^-1 d = d' U^-1 U^-T d = ||U^-T d||^2. Solving U z = d
+  # instead is a different quadratic form and silently misprices every
+  # correlated candidate -- see the PsN mvnpdf_cholesky oracle in
+  # test-sir-psn-oracles.R. A diagonal covMat cannot catch this, because a
+  # diagonal U equals its own transpose.
   log_rel_pdf <- vapply(
     seq_len(n),
     function(i) {
-      z <- backsolve(L, samples[i, ] - mu)
+      z <- backsolve(U, samples[i, ] - mu, transpose = TRUE)
       -0.5 * sum(z^2)
     },
     numeric(1L)
   )
+
+  # With Box-Cox active the draws live in transformed coordinates, so the
+  # multivariate-normal density above is q_y, not the density induced on the
+  # original parameter scale. Adding log|det J| converts it:
+  #
+  #   log q_x(x) = log q_y(T(x)) + log|det J_T(x)|
+  #
+  # The weight must divide by q_x, because the likelihood in the numerator is
+  # a function of x. Omitting it would retain a sample from L(x)|det J_T(x)|,
+  # which changes if the model is written in another smooth parameterization.
+  # The term is supplied already relative to the centre, so relPDF stays 1
+  # there and the meaning of `relPDF` is unchanged: the density the weight
+  # divides by, relative to the proposal centre.
+  if (!is.null(logJacobian)) {
+    log_rel_pdf <- log_rel_pdf + logJacobian
+  }
 
   log_lik_ratio <- -0.5 * dOFV
   log_ir <- log_lik_ratio - log_rel_pdf
@@ -209,8 +242,10 @@ sirResample <- function(samples, weights, m, capResampling = 1) {
   cap <- as.integer(floor(capResampling))
   raw_df <- data.frame(
     sample_id = seq_len(nrow(paramMat)),
+    role = "sample",
     as.data.frame(paramMat, check.names = FALSE),
-    check.names = FALSE
+    check.names = FALSE,
+    stringsAsFactors = FALSE
   )
   raw_df$dOFV <- dOFV
   raw_df$deltaofv <- dOFV
@@ -247,10 +282,15 @@ sirResample <- function(samples, weights, m, capResampling = 1) {
     nrow = 1L,
     dimnames = list(NULL, param_names)
   )
+  # The proposal centre. It is written out because PsN writes it too, but it is
+  # not a draw from the proposal: `role` marks it so every empirical summary
+  # can drop it. See .sirProposalRows().
   mu_df <- data.frame(
     sample_id = 0L,
+    role = "reference",
     as.data.frame(mu_mat, check.names = FALSE),
-    check.names = FALSE
+    check.names = FALSE,
+    stringsAsFactors = FALSE
   )
   mu_df$dOFV <- 0
   mu_df$deltaofv <- 0
@@ -266,4 +306,22 @@ sirResample <- function(samples, weights, m, capResampling = 1) {
   out <- rbind(mu_df, expanded)
   rownames(out) <- NULL
   out
+}
+
+# The rows that are genuinely draws from the proposal: one per distinct
+# candidate, with the synthetic centre row removed. Every empirical summary of
+# the *proposal* goes through here -- quantiles, intervals, covariance, RSEs --
+# so that the centre cannot bias them. PsN drops the same row before
+# summarising (R-scripts/sir_default.R).
+#
+# Rows are expanded to one per resample slot, hence the !duplicated() pass.
+.sirProposalRows <- function(raw) {
+  keep <- !duplicated(raw$sample_id)
+  if (!is.null(raw$role)) {
+    keep <- keep & raw$role != "reference"
+  } else {
+    # Raw results written before `role` existed.
+    keep <- keep & raw$sample_id != 0L
+  }
+  raw[keep, , drop = FALSE]
 }

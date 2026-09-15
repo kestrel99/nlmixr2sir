@@ -67,6 +67,7 @@ runSIR <- function(
   rxThreads <- control$rxThreads
   recover <- control$recover
   addIterations <- control$addIterations
+  saveFiles <- control$saveFiles
   omegaFallback <- control$omegaFallback
   sigmaFallbackRse <- control$sigmaFallbackRse
   omegaDf <- control$omegaDf
@@ -91,22 +92,128 @@ runSIR <- function(
   nSamples <- as.integer(nSamples)
   nResample <- as.integer(nResample)
   ps <- .sirParamSpace(fit)
-  run_dir <- nlmixr2utils::resolveRunDir(
-    "sir",
-    fitName,
-    restart = !(recover || addIterations),
-    outputDir = directory
-  )
-  output_dir <- run_dir$path
-  if (identical(run_dir$mode, "overwrite") && dir.exists(output_dir)) {
-    unlink(output_dir, recursive = TRUE, force = TRUE)
+
+  # Free check, so it goes first. Each iteration rebuilds the proposal from the
+  # empirical covariance of its retained vectors, which has rank at most
+  # nResample - 1; nResample <= nParams therefore cannot produce a usable
+  # proposal, and there is no point evaluating a single model to find out.
+  n_params <- nrow(ps)
+  if (min(nResample) <= n_params) {
+    bad <- nResample[nResample <= n_params]
+    cli::cli_abort(c(
+      "{.arg nResample} is too small for the number of estimated parameters.",
+      "x" = "Requested {.val {bad}} for {n_params} parameter{?s}.",
+      "i" = "The empirical proposal covariance would have rank at most {min(bad) - 1}.",
+      "i" = "Use {.arg nResample} greater than {n_params}; PsN's working ratio is about 5 samples per resample."
+    ))
   }
-  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
-  master_seed <- nlmixr2utils::withRunSeed(output_dir, prefix = "sir")
-  saved_state <- if (recover || addIterations) {
-    nlmixr2utils::readRunState(output_dir, "sir")
+
+  # Before anything expensive or destructive: prove that the evaluator used for
+  # candidates reproduces this fit's own objective. Every dOFV is measured
+  # against fit$objf, so if the two are on different surfaces the importance
+  # weights are not weights for the advertised target. Runs first so an
+  # unsupported fit cannot create or overwrite a run directory.
+  .sirCheckObjective(
+    fit,
+    workers = workers,
+    rxThreads = rxThreads,
+    objfTolerance = control$objfTolerance,
+    stencil = control$objfStencil,
+    stencilTolerance = control$objfStencilTolerance
+  )
+
+  # Resolve the initial proposal up front, whatever route supplies it, so its
+  # resolved numbers can go into the fingerprint. This also validates file-based
+  # inputs before any model evaluation. A recovery run pays for this too, and
+  # that is the point: re-reading the file is what detects a changed file at an
+  # unchanged path.
+  initial <- .sirResolveInitialProposal(fit, ps, control)
+
+  fingerprint <- .sirRunFingerprint(
+    fit, ps, nSamples, nResample, control,
+    initial = initial
+  )
+
+  if (!saveFiles) {
+    # Nothing is written and no directory is created, so there is no state to
+    # resume from and no per-iteration seed file. A single set.seed() before
+    # the call is what makes such a run reproducible.
+    if (!is.null(directory)) {
+      cli::cli_inform(
+        "{.arg saveFiles} is {.code FALSE}; {.arg directory} is ignored and nothing is written."
+      )
+    }
+    output_dir <- NULL
+    master_seed <- NULL
+    saved_state <- NULL
+    recover <- FALSE
   } else {
-    NULL
+    run_dir <- nlmixr2utils::resolveRunDir(
+      "sir",
+      fitName,
+      restart = !(recover || addIterations),
+      outputDir = directory
+    )
+    output_dir <- run_dir$path
+
+    # Establish the right to write here before writing anything at all --
+    # including the seed file and the manifest. resolveRunDir() returns resume
+    # mode for any existing directory under the default recover = TRUE, so
+    # guarding only the overwrite path let an unrelated non-empty directory
+    # acquire a manifest and become deletable by the next run.
+    .sirAssertClaimable(output_dir)
+
+    if (identical(run_dir$mode, "overwrite") && dir.exists(output_dir)) {
+      # Only ever clear a directory this package owns. An explicitly supplied
+      # path can hold anything.
+      .sirAssertSafeToClear(output_dir)
+      unlink(output_dir, recursive = TRUE, force = TRUE)
+    }
+    dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+    master_seed <- nlmixr2utils::withRunSeed(output_dir, prefix = "sir")
+    saved_state <- if (recover || addIterations) {
+      nlmixr2utils::readRunState(output_dir, .sirStateSchema())
+    } else {
+      NULL
+    }
+
+    # Whatever is on disk has to belong to the run being asked for. Extending a
+    # run deliberately changes the schedule, so that field is exempt there.
+    if (!is.null(saved_state)) {
+      # failClosed: reusing saved state is exactly the situation where an
+      # unverifiable identity field must block rather than be waved through.
+      bad <- .sirCompareFingerprints(
+        saved_state$fingerprint,
+        fingerprint,
+        ignore = if (isTRUE(addIterations)) "schedule" else character(),
+        failClosed = TRUE
+      )
+      if (length(bad) > 0L) {
+        .sirAbortFingerprint(
+          bad,
+          output_dir,
+          if (isTRUE(addIterations)) "addIterations" else "recovery"
+        )
+      }
+      # Dependency versions are recorded but not enforced: a bump does not by
+      # itself invalidate a result. It can change proposal construction,
+      # Box-Cox estimation or RNG behaviour, though, so it is never silent.
+      savedPkgs <- saved_state$fingerprint$pkgVersions
+      if (
+        !is.null(savedPkgs) &&
+          !is.na(savedPkgs) &&
+          !identical(savedPkgs, fingerprint$pkgVersions)
+      ) {
+        cli::cli_warn(c(
+          "The saved SIR run was produced under different package versions.",
+          "i" = "Saved: {savedPkgs}",
+          "i" = "Now:   {fingerprint$pkgVersions}",
+          "i" = "Order is nlmixr2sir/nlmixr2est/nlmixr2utils/rxode2. Results are being reused; rerun with {.code recover = FALSE} if that is not wanted."
+        ))
+      }
+    }
+
+    .sirWriteManifest(output_dir, fingerprint, fitName, seed = master_seed)
   }
 
   if (!is.null(saved_state) && isTRUE(addIterations)) {
@@ -116,6 +223,8 @@ runSIR <- function(
     mu <- saved_state$nextMu
     proposal_cov <- saved_state$nextCov
     boxcox_state <- saved_state$nextBoxcoxState
+    reference_ofv <- saved_state$nextReferenceOfv %||% fit$objf
+    proposal_source <- saved_state$proposalSource %||% NA_character_
     iter_results <- saved_state$iterations
     iter_summary <- saved_state$iterationSummary
     prev_attempted <- tail(iter_summary$nAttempted, 1L)
@@ -131,6 +240,8 @@ runSIR <- function(
     mu <- saved_state$nextMu
     proposal_cov <- saved_state$nextCov
     boxcox_state <- saved_state$nextBoxcoxState
+    reference_ofv <- saved_state$nextReferenceOfv %||% fit$objf
+    proposal_source <- saved_state$proposalSource %||% NA_character_
     iter_results <- saved_state$iterations
     iter_summary <- saved_state$iterationSummary
     prev_attempted <- tail(iter_summary$nAttempted, 1L)
@@ -138,22 +249,29 @@ runSIR <- function(
   } else {
     iter_numbers <- seq_along(nSamples)
     iter_index <- iter_numbers
-    initial <- .sirResolveInitialProposal(fit, ps, control)
     proposal_cov <- initial$covMat
     # The raw-results route derives its own centre and Box-Cox state from the
     # supplied vectors, the way PsN's iteration 0 does; every other route
     # centres on the fit's own estimates.
     mu <- initial$mu %||% .sirProposalMu(fit, ps)
     boxcox_state <- initial$boxcoxState
+    proposal_source <- initial$source
     if (!identical(initial$source, "cov")) {
       cli::cli_inform(
         "Initial SIR proposal built from {.arg {initial$source}}, not {.code fit$cov}."
       )
     }
+    reference_ofv <- fit$objf
     iter_results <- list()
     iter_summary <- data.frame()
     prev_attempted <- NULL
     prev_successful <- NULL
+  }
+
+  reference_ofv_history <- if (is.null(saved_state)) {
+    numeric(0)
+  } else {
+    saved_state$referenceOfvHistory %||% numeric(0)
   }
 
   for (j in seq_along(iter_numbers)) {
@@ -174,11 +292,8 @@ runSIR <- function(
     cli::cli_inform(
       "Running SIR iteration {iter_num}: {attempted_samples} attempted samples, {nResample[[schedule_idx]]} requested resamples." # nolint: line_length_linter.
     )
-    iter_res <- nlmixr2utils::withRunSeed(
-      output_dir,
-      key = paste0("sir-iteration-", iter_num),
-      prefix = "sir",
-      expr = sirRunIteration(
+    runIteration <- function() {
+      sirRunIteration(
         fit = fit,
         mu = mu,
         proposalCov = proposal_cov,
@@ -200,34 +315,61 @@ runSIR <- function(
         omegaFallback = omegaFallback,
         sigmaFallbackRse = sigmaFallbackRse,
         omegaDf = omegaDf,
-        isLastIteration = is_last
+        isLastIteration = is_last,
+        referenceOfv = reference_ofv
       )
-    )
+    }
+    # Per-iteration seeding exists so a resumed run reproduces the stream it
+    # would have had. With nothing persisted there is nothing to resume, so the
+    # ambient RNG drives the run and a single set.seed() reproduces it.
+    iter_res <- if (saveFiles) {
+      nlmixr2utils::withRunSeed(
+        output_dir,
+        key = paste0("sir-iteration-", iter_num),
+        prefix = "sir",
+        expr = runIteration()
+      )
+    } else {
+      runIteration()
+    }
 
     iter_results[[as.character(iter_num)]] <- iter_res
     iter_summary <- rbind(iter_summary, iter_res$iterSummary)
-    .sirWriteIterationSummary(iter_summary, output_dir)
-    .sirWriteRejectionSummary(iter_summary, output_dir)
+    if (saveFiles) {
+      .sirWriteIterationSummary(iter_summary, output_dir)
+      .sirWriteRejectionSummary(iter_summary, output_dir)
+    }
 
     mu <- iter_res$newMu
     proposal_cov <- iter_res$newCov
     boxcox_state <- iter_res$boxcoxState
+    reference_ofv <- iter_res$newReferenceOfv
+    reference_ofv_history <- c(
+      reference_ofv_history,
+      stats::setNames(iter_res$newReferenceOfv, as.character(iter_num))
+    )
     prev_attempted <- iter_res$iterSummary$nAttempted
     prev_successful <- iter_res$iterSummary$nSuccessful
 
-    nlmixr2utils::writeRunState(
+    if (saveFiles) {
+      nlmixr2utils::writeRunState(
       output_dir,
       list(
+        fingerprint = fingerprint,
+        proposalSource = proposal_source,
+        referenceOfvHistory = reference_ofv_history,
         completedIterations = iter_num,
         nextMu = mu,
         nextCov = proposal_cov,
         nextBoxcoxState = boxcox_state,
+        nextReferenceOfv = reference_ofv,
         iterations = iter_results,
         iterationSummary = iter_summary,
         result = NULL
       ),
-      "sir"
-    )
+      .sirStateSchema()
+      )
+    }
   }
 
   final_iter <- iter_results[[length(iter_results)]]
@@ -235,16 +377,21 @@ runSIR <- function(
   cov_mat <- attr(summary_df, "covMatrix")
   cor_mat <- attr(summary_df, "corMatrix")
   sdcor_mat <- attr(summary_df, "sdCorMatrix")
-  utils::write.csv(
-    summary_df,
-    file.path(output_dir, "sir_results.csv"),
-    row.names = FALSE
-  )
-  .sirWriteCovMatrices(summary_df, output_dir, fitName = fitName)
-  # Make the SIR uncertainty selectable with nlmixr2est::setCov(fit, "sir").
-  .sirRegisterCov(fit, summary_df, ps)
+  # The canonical raw results are part of the returned object either way; only
+  # writing them to disk is optional.
   raw_results <- .sirCanonicalRawResults(fit, fitName, final_iter$resampledMat)
-  nlmixr2utils::writeRawResults(raw_results, output_dir)
+  if (saveFiles) {
+    utils::write.csv(
+      summary_df,
+      file.path(output_dir, "sir_results.csv"),
+      row.names = FALSE
+    )
+    .sirWriteCovMatrices(summary_df, output_dir, fitName = fitName)
+    nlmixr2utils::writeRawResults(raw_results, output_dir)
+  }
+  # Make the SIR uncertainty selectable with nlmixr2est::setCov(fit, "sir").
+  # This lives in the fit, not on disk, so it happens either way.
+  .sirRegisterCov(fit, summary_df, ps)
 
   class(summary_df) <- c("nlmixr2SIR", "data.frame")
   attr(summary_df, "iterationSummary") <- iter_summary
@@ -258,20 +405,39 @@ runSIR <- function(
   attr(summary_df, "rawResults") <- raw_results
   attr(summary_df, "seed") <- master_seed
   attr(summary_df, "call") <- match.call()
-
-  nlmixr2utils::writeRunState(
-    output_dir,
-    list(
-      completedIterations = tail(iter_summary$iter, 1L),
-      nextMu = mu,
-      nextCov = proposal_cov,
-      nextBoxcoxState = boxcox_state,
-      iterations = iter_results,
-      iterationSummary = iter_summary,
-      result = summary_df
-    ),
-    "sir"
+  # Complete provenance on the object itself, so a result read back from an
+  # .rds can still say what produced it and the diagnostics can describe the
+  # algorithm that actually ran rather than assuming defaults.
+  attr(summary_df, "control") <- control
+  attr(summary_df, "schedule") <- data.frame(
+    iter = seq_along(nSamples),
+    nSamples = nSamples,
+    nResample = nResample
   )
+  attr(summary_df, "proposalSource") <- proposal_source
+  attr(summary_df, "referenceOfvHistory") <- reference_ofv_history
+  attr(summary_df, "fingerprint") <- fingerprint
+  attr(summary_df, "saveFiles") <- saveFiles
+
+  if (saveFiles) {
+    nlmixr2utils::writeRunState(
+      output_dir,
+      list(
+        fingerprint = fingerprint,
+        proposalSource = proposal_source,
+        referenceOfvHistory = reference_ofv_history,
+        completedIterations = tail(iter_summary$iter, 1L),
+        nextMu = mu,
+        nextCov = proposal_cov,
+        nextBoxcoxState = boxcox_state,
+        nextReferenceOfv = reference_ofv,
+        iterations = iter_results,
+        iterationSummary = iter_summary,
+        result = summary_df
+      ),
+      .sirStateSchema()
+    )
+  }
 
   summary_df
 }

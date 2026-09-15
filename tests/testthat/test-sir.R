@@ -818,6 +818,8 @@ test_that("sirRunIteration returns correct list structure", {
       "resampledMat",
       "newMu",
       "newCov",
+      "referenceOfv",
+      "newReferenceOfv",
       "iterSummary",
       "boxcoxState",
       "rawResults"
@@ -827,7 +829,7 @@ test_that("sirRunIteration returns correct list structure", {
 
 test_that("sirRunIteration resampledMat has nResample rows", {
   skip_on_cran()
-  expect_equal(nrow(iter1()$resampledMat), 4L)
+  expect_equal(nrow(iter1()$resampledMat), 8L)
 })
 
 test_that("sirRunIteration iterSummary has expected columns and values", {
@@ -845,6 +847,12 @@ test_that("sirRunIteration iterSummary has expected columns and values", {
       "nFailed",
       "nResample",
       "nResampled",
+      "ess",
+      "essFraction",
+      "maxWeight",
+      "perplexity",
+      "nNonNegligible",
+      "posDefAdjusted",
       "minDOFV",
       "meanDOFV",
       "nNegativeDOFV",
@@ -855,9 +863,9 @@ test_that("sirRunIteration iterSummary has expected columns and values", {
     )
   )
   expect_equal(s$iter, 1L)
-  expect_equal(s$nSamples, 8L)
-  expect_equal(s$nAttempted, 8L)
-  expect_true(s$nCollected <= 8L && s$nCollected >= 1L)
+  expect_equal(s$nSamples, 16L)
+  expect_equal(s$nAttempted, 16L)
+  expect_true(s$nCollected <= 16L && s$nCollected >= 1L)
   expect_gte(s$nFailed, 0L)
   expect_true(is.numeric(s$minDOFV))
   expect_gte(s$sigmaRejected, 0L)
@@ -956,8 +964,8 @@ test_that("sirRunIteration recentering: newMu shifts when a better sample exists
       theoFit(),
       mu = mu_perturbed,
       proposalCov = prop_cov,
-      nSamples = 8L,
-      nResample = 4L,
+      nSamples = 16L,
+      nResample = 8L,
       iterNum = 1L,
       recenter = TRUE,
       boxcox = FALSE,
@@ -987,8 +995,8 @@ test_that("sirRunIteration keeps raw results in memory when directory is provide
       theoFit(),
       mu = mu,
       proposalCov = prop_cov,
-      nSamples = 5L,
-      nResample = 3L,
+      nSamples = 16L,
+      nResample = 8L,
       iterNum = 2L,
       directory = tmp_dir
     )
@@ -1009,8 +1017,8 @@ test_that("sirRunIteration chained: iter 2 accepts boxcoxState from iter 1", {
       theoFit(),
       mu = iter1()$newMu,
       proposalCov = iter1()$newCov,
-      nSamples = 6L,
-      nResample = 3L,
+      nSamples = 16L,
+      nResample = 8L,
       iterNum = 2L,
       boxcoxState = iter1()$boxcoxState
     )
@@ -1021,6 +1029,8 @@ test_that("sirRunIteration chained: iter 2 accepts boxcoxState from iter 1", {
       "resampledMat",
       "newMu",
       "newCov",
+      "referenceOfv",
+      "newReferenceOfv",
       "iterSummary",
       "boxcoxState",
       "rawResults"
@@ -1279,8 +1289,8 @@ test_that("runSIR runs end-to-end and writes Step 10 artifacts", {
   res <- suppressMessages(
     runSIR(
       theoFit(),
-      nSamples = c(5L, 5L),
-      nResample = c(3L, 3L),
+      nSamples = c(16L, 16L),
+      nResample = c(8L, 8L),
       directory = tmp_dir,
       control = runSIRControl(recover = FALSE, workers = 1L, boxcox = TRUE)
     )
@@ -1303,8 +1313,8 @@ test_that("runSIR runs end-to-end and writes Step 10 artifacts", {
 
   iter_summary <- attr(res, "iterationSummary")
   expect_equal(nrow(iter_summary), 2L)
-  expect_equal(iter_summary$nSamples, c(5L, 5L))
-  expect_equal(iter_summary$nResample, c(3L, 3L))
+  expect_equal(iter_summary$nSamples, c(16L, 16L))
+  expect_equal(iter_summary$nResample, c(8L, 8L))
 
   iterations <- attr(res, "iterations")
   expect_null(iterations[[2L]]$boxcoxState)
@@ -1375,4 +1385,44 @@ test_that("plot.nlmixr2SIR returns resampling diagnostic plot", {
   p <- plot(sirObj(), type = "resampling")
   expect_s3_class(p, "ggplot")
   expect_equal(p$labels$y, "Probability resample")
+})
+
+test_that("sirSummary reports rse_sd_scale only for OMEGA diagonals", {
+  skip_on_cran()
+  fit <- blockFit()
+  ps <- .sirParamSpace(fit)
+  # blockFit has 7 estimated parameters, so 8 retained vectors would give a
+  # covariance of rank exactly 7 -- no margin for a repeated draw.
+  it <- suppressMessages(sirRunIteration(
+    fit,
+    mu = .sirProposalMu(fit),
+    proposalCov = sirGetProposalCov(fit),
+    nSamples = 24L,
+    nResample = 12L,
+    iterNum = 1L,
+    recenter = FALSE,
+    boxcox = FALSE,
+    directory = NULL
+  ))
+  s <- sirSummary(it$resampledMat, fit)
+  kind <- ps$kind[match(s$param, ps$sirName)]
+
+  # A variance has an SD-scale counterpart; RSE(sqrt(v)) ~= RSE(v) / 2.
+  diag_rows <- which(kind == "omegaDiag")
+  expect_gt(length(diag_rows), 0L)
+  expect_equal(
+    s$rse_sd_scale[diag_rows],
+    s$rse[diag_rows] / 2,
+    tolerance = 1e-12
+  )
+
+  # An OMEGA off-diagonal is a covariance: it may be negative or zero, and has
+  # no square root, so there is no SD scale to convert to.
+  off_rows <- which(kind == "omegaOffdiag")
+  expect_gt(length(off_rows), 0L)
+  expect_true(all(is.na(s$rse_sd_scale[off_rows])))
+
+  # THETAs and residual-error SDs are already on their reported scale.
+  other_rows <- which(!kind %in% c("omegaDiag", "omegaOffdiag"))
+  expect_true(all(is.na(s$rse_sd_scale[other_rows])))
 })

@@ -29,8 +29,8 @@ distributions, \code{"dofv"} and \code{"resampling"} are per-sample diagnostics,
 at each iteration -- showing whether the uncertainty has stopped moving --
 \code{"rsecor"} is the RSE/correlation matrix with the diagonal annotated by
 CI asymmetry, and \code{"convergence"} is the dOFV-versus-chi-square plot: per iteration,
-the empirical dOFV quantile curve for the proposal and for the SIR
-posterior against a reference chi-square on the number of estimated
+the empirical dOFV quantile curve for the proposal and for the retained
+SIR distribution against a reference chi-square on the number of estimated
 parameters. Convergence reads as the SIR curve settling onto the
 reference.}
 
@@ -44,7 +44,8 @@ iterations of the convergence plot.}
 \item{ci}{Interval width, as a percentage, for \code{type = "intervals"} and for
 the asymmetry annotation on \code{type = "rsecor"}.}
 
-\item{which}{For \code{type = "rsecor"}, whether to show the final SIR posterior
+\item{which}{For \code{type = "rsecor"}, whether to show the final retained SIR
+distribution
 (\code{"SIR"}, the default) or the first iteration's proposal.}
 }
 \value{

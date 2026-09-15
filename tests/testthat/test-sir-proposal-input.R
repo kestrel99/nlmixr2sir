@@ -161,8 +161,8 @@ test_that("runSIR runs on a fit with no covariance step, via rseTheta", {
   set.seed(20260913)
   res <- suppressMessages(runSIR(
     fit,
-    nSamples = c(5L, 5L),
-    nResample = c(3L, 3L),
+    nSamples = c(16L, 16L),
+    nResample = c(8L, 8L),
     directory = tmp,
     control = runSIRControl(recover = FALSE, workers = 1L, rseTheta = 30)
   ))
@@ -177,8 +177,8 @@ test_that("runSIR runs on a fit with no covariance step, via covmatInput", {
   set.seed(20260913)
   res <- suppressMessages(runSIR(
     theoFitNoCov(),
-    nSamples = c(5L, 5L),
-    nResample = c(3L, 3L),
+    nSamples = c(16L, 16L),
+    nResample = c(8L, 8L),
     directory = tmp,
     control = runSIRControl(
       recover = FALSE,
@@ -276,8 +276,8 @@ test_that("runSIR can be seeded from a raw-results file", {
   set.seed(2)
   res <- suppressMessages(runSIR(
     theoFit(),
-    nSamples = 6L,
-    nResample = 4L,
+    nSamples = 16L,
+    nResample = 8L,
     directory = tmp,
     control = runSIRControl(
       recover = FALSE,

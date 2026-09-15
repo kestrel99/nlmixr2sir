@@ -61,6 +61,18 @@ theoFitNoCov <- .sirLazy(suppressMessages(
   )
 ))
 
+# Theta-only covariance: covFull = FALSE gives a fit$cov with no OMEGA rows.
+# This is the case the automatic OMEGA fallback actually serves -- a covariance
+# that is present but incomplete, as opposed to one that is absent entirely.
+theoFitThetaCov <- .sirLazy(suppressMessages(suppressWarnings(
+  nlmixr2utils::nlmixr2(
+    theoOneCmt,
+    nlmixr2data::theo_sd,
+    est = "focei",
+    control = list(print = 0L, covMethod = "r", covFull = FALSE)
+  )
+)))
+
 # Three-eta variant, used by the tests that need more than one omega element.
 threeEtaOneCmt <- function() {
   ini({
@@ -126,8 +138,8 @@ iter1 <- .sirLazy(local({
       fit,
       mu = .sirProposalMu(fit),
       proposalCov = sirGetProposalCov(fit),
-      nSamples = 8L,
-      nResample = 4L,
+      nSamples = 16L,
+      nResample = 8L,
       iterNum = 1L,
       recenter = TRUE,
       boxcox = TRUE,
@@ -145,6 +157,9 @@ sirObj <- .sirLazy(local({
   attr(out, "iterations") <- list(it)
   attr(out, "resampledMat") <- it$resampledMat
   attr(out, "outputDir") <- tempdir()
+  # runSIR() records the effective controls on its result; this stand-in does
+  # the same, so diagnostics read the same provenance they would in a real run.
+  attr(out, "control") <- runSIRControl(workers = 1L)
   out
 }))
 

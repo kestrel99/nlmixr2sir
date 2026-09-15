@@ -12,7 +12,7 @@ test_that("runSIR writes the complete artifact set", {
   res <- suppressMessages(runSIR(
     theoFit(),
     nSamples = c(6L, 6L),
-    nResample = c(4L, 4L),
+    nResample = c(8L, 8L),
     directory = tmp,
     fitName = "demo",
     control = runSIRControl(recover = FALSE, workers = 1L)
@@ -27,6 +27,7 @@ test_that("runSIR writes the complete artifact set", {
       "raw_results.rds",
       "raw_results_header.json",
       "sample_rejection_summary.txt",
+      "sir_manifest.dcf",
       "sir_results.csv",
       "sir_seed.rds",
       "sir_state.rds",
@@ -44,8 +45,8 @@ test_that("the written summary round-trips back through read.csv", {
   set.seed(1)
   res <- suppressMessages(runSIR(
     theoFit(),
-    nSamples = 6L,
-    nResample = 4L,
+    nSamples = 16L,
+    nResample = 8L,
     directory = tmp,
     control = runSIRControl(recover = FALSE, workers = 1L)
   ))
@@ -66,7 +67,7 @@ test_that("recover returns the completed run instead of repeating it", {
   first <- suppressMessages(runSIR(
     theoFit(),
     nSamples = c(6L, 6L),
-    nResample = c(4L, 4L),
+    nResample = c(8L, 8L),
     directory = tmp,
     control = runSIRControl(recover = FALSE, workers = 1L)
   ))
@@ -78,7 +79,7 @@ test_that("recover returns the completed run instead of repeating it", {
   again <- suppressMessages(runSIR(
     theoFit(),
     nSamples = c(6L, 6L),
-    nResample = c(4L, 4L),
+    nResample = c(8L, 8L),
     directory = tmp,
     control = runSIRControl(recover = TRUE, workers = 1L)
   ))
@@ -96,7 +97,7 @@ test_that("addIterations extends a completed run", {
   first <- suppressMessages(runSIR(
     theoFit(),
     nSamples = c(6L, 6L),
-    nResample = c(4L, 4L),
+    nResample = c(8L, 8L),
     directory = tmp,
     control = runSIRControl(recover = FALSE, workers = 1L)
   ))
@@ -104,8 +105,8 @@ test_that("addIterations extends a completed run", {
 
   extended <- suppressMessages(runSIR(
     theoFit(),
-    nSamples = 6L,
-    nResample = 4L,
+    nSamples = 16L,
+    nResample = 8L,
     directory = tmp,
     control = runSIRControl(addIterations = TRUE, workers = 1L)
   ))
@@ -151,8 +152,8 @@ test_that("print() works on a real run", {
   set.seed(6)
   res <- suppressMessages(runSIR(
     theoFit(),
-    nSamples = 6L,
-    nResample = 4L,
+    nSamples = 16L,
+    nResample = 8L,
     directory = tmp,
     control = runSIRControl(recover = FALSE, workers = 1L)
   ))

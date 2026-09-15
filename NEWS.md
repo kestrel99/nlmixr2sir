@@ -1,3 +1,179 @@
+# nlmixr2sir (development version)
+
+## Diagnostics and provenance
+
+* **Every iteration now reports importance-weight degeneracy.** Effective
+  sample size (Kish, `1 / sum(p^2)`), its fraction of the usable samples, the
+  largest single weight, perplexity, and the count of non-negligible weights
+  are added to the iteration summary. `runSIR()` warns when the effective
+  sample size falls below 10% of the usable samples, or one candidate carries
+  more than half the weight. Log-scale normalization stops the weights
+  overflowing but says nothing about whether they are informative: a run resting
+  on two candidates normalizes perfectly well and previously reported nothing
+  unusual.
+
+* **The convergence-plot noise band now uses the run's own resampler.** It
+  called a local `sample.int()` that was never given the run's `capResampling`
+  and treated any cap above one as unlimited replacement, whereas
+  `sirResample()` expands each candidate into a finite number of slots. The
+  band therefore described a different algorithm from the one that produced the
+  retained sample. Replicates now go through `sirResample()` with the run's
+  actual cap.
+
+* **Results carry their full provenance.** The effective control object,
+  schedule, proposal source, reference-OFV history, run fingerprint, and
+  whether any covariance needed positive-definite repair are attached to the
+  returned object and persisted in the run state, alongside the existing seed
+  and `sir_manifest.dcf` manifest.
+
+* A frozen end-to-end fixture (`test-sir-golden-iteration.R`) pins the whole
+  component chain -- proposal density, Box-Cox Jacobian, importance ratios,
+  normalized weights, resampling properties, proposal update, and weight
+  diagnostics -- against values computed once from synthetic inputs. It is a
+  regression fixture, not a PsN comparison; the genuine PsN oracle values remain
+  in `test-sir-psn-oracles.R`.
+
+* Terminology: "SIR posterior" is now "retained SIR distribution" throughout the
+  code and documentation, matching the technical reference's statement that the
+  output is not Bayesian. The technical reference and README now set out, next
+  to the convergence diagnostic itself, the conditions under which the
+  chi-square reference can mislead -- boundary variance components, weak
+  identification, multimodality, non-smooth likelihoods, small subject counts --
+  and note that percentile intervals from a likelihood-weighted sample do not
+  automatically have nominal frequentist coverage.
+
+## Correctness fixes
+
+* **Importance weights were wrong for correlated proposals.** `sirCalcWeights()`
+  solved against R's Cholesky factor instead of its transpose, giving the wrong
+  Mahalanobis distance and so the wrong proposal density for every candidate.
+  On PsN's own `mvnpdf_cholesky` oracle the relative density was
+  `0.0772293088557175` where PsN and the explicit Mahalanobis form both give
+  `0.0837378551174778`. Because `fit$cov` is the default proposal source and
+  population covariances are essentially always correlated, this affected the
+  main path: **retained samples, intervals, RSEs, and every diagnostic derived
+  from them are wrong in runs made with earlier versions and should be rerun.**
+  The existing tests could not catch it because all of them used a diagonal
+  covariance, for which a Cholesky factor equals its own transpose; PsN's
+  density oracle and a `mvtnorm` cross-check are now in the suite.
+
+* **Box-Cox proposals now include the change-of-variables Jacobian**, and this
+  is a deliberate divergence from PsN. Candidates are drawn on a transformed
+  scale and mapped back, so the density induced on the original parameter scale
+  is `q_x(x) = q_y(T(x)) * |det J_T(x)|`; the weight now divides by `q_x`.
+  Omitting the term, as PsN does, retains a sample from `L(x)|det J_T(x)|`, so
+  the answer depends on which smooth parameterization the model is written in --
+  worst for the skewed and weakly identified parameters Box-Cox exists to help
+  with. Importance-sampling a known Gamma(3, 1) target through a Box-Cox
+  proposal recovers a mean of 3.00 and second moment 12.00 with the Jacobian
+  (truth 3 and 12), against 2.25 and 7.31 without it. SIR now targets the
+  normalized likelihood on nlmixr2's own parameter scale, and the retained
+  distribution is invariant to re-expressing the model in another smooth
+  parameterization. `boxcox = TRUE` is the default, so **Box-Cox runs made with
+  earlier versions should be rerun**, and `-boxcox` is now marked *partial* in
+  the README parity matrix.
+
+* **Recovery now checks that the saved run is the run being asked for.**
+  `recover = TRUE` is the default, and a completed result used to be returned
+  solely because a state file existed in the directory and recorded enough
+  iterations. Nothing verified it belonged to the fit in hand, so pointing a
+  different model, dataset, schedule, or set of statistical controls at the same
+  directory returned a stale result labelled as the new run's. State now carries
+  a run fingerprint -- model, data, parameter set, estimates, objective,
+  estimation method, schedule, statistical controls, and a state-format version
+  -- and a mismatch aborts naming the fields that changed. `addIterations`
+  exempts the schedule, which it deliberately changes. Parallelism settings are
+  excluded: they do not change the answer, so they must not invalidate a run.
+
+* **`runSIR()` will no longer delete a directory it does not recognise.** An
+  explicitly supplied directory in overwrite mode was removed with
+  `unlink(recursive = TRUE)` with no check of what it contained. Directories
+  created by `runSIR()` now carry a `sir_manifest.dcf` file, which records what
+  produced them and is also what permits them to be cleared. A non-empty
+  directory without one is refused.
+
+* **`runSIRControl(saveFiles = FALSE)` runs entirely in memory.** No directory
+  is created and nothing is written; the result is returned as usual and
+  `setCov()` registration still happens. Recovery, `addIterations`, and
+  per-iteration seed reproduction all need the saved state, so they are
+  unavailable -- seed such a run with `set.seed()` beforehand to reproduce it.
+  `addIterations = TRUE` with `saveFiles = FALSE` is rejected by
+  `runSIRControl()`.
+
+* **Rank-deficient proposals are now an error rather than silently
+  regularized.** The empirical covariance of `m` retained vectors in `p`
+  dimensions has rank at most `m - 1`, so a full-rank proposal needs
+  `m > p`. Forcing such a matrix positive definite does not recover the missing
+  information -- it fabricates variance in directions the retained sample never
+  supported, and the next iteration then proposes along them. `runSIR()` now
+  rejects `nResample <= <number of estimated parameters>` before any model is
+  evaluated, and the proposal update rejects a retained sample whose numerical
+  rank is deficient (repeated or collinear draws). PsN stops here too.
+
+* **The positive-definite repair is now scale-relative.** Eigenvalues were
+  floored at the *absolute* value `sqrt(.Machine$double.eps)`, which is not
+  scale-equivariant: on one and the same singular problem expressed in
+  different units, that floor was 8.7e-3 of the largest eigenvalue at one scale
+  and 8.7e-15 at another -- dominant in one parameterization, negligible in
+  another. Pharmacometric parameters genuinely span those scales. The floor is
+  now relative to the matrix's own largest eigenvalue, and exists only to clean
+  up floating-point roundoff on a covariance that is already full rank.
+
+* A raw-results proposal with fewer vectors than parameters is now an error.
+  It previously warned and continued with a forced positive-definite matrix.
+
+* When fewer samples have non-zero resampling probability than the requested
+  resample count, the count is reduced with a warning naming the cause, instead
+  of aborting inside the resampler with a message about probabilities. A finite
+  dOFV does not guarantee a finite importance ratio, so the turnout adjustment
+  alone could leave the count too high.
+
+* **The documented automatic covariance fallback now matches what the code
+  does.** The README and technical reference said a failed covariance step or
+  `covMethod = ""` fell back automatically to the Wishart-style OMEGA
+  approximation. It does not, and cannot: that approximation needs only the
+  OMEGA estimates and the subject count, but such a fit carries no THETA
+  uncertainty at all, and assuming a THETA scale would fabricate the quantity
+  SIR reports. The fallback completes an *incomplete* `fit$cov` (`covFull =
+  FALSE`, or a partial covariance) and that path is now covered end to end by
+  tests. An *absent* `fit$cov` stops the run, and the error now names
+  `rseTheta`, `covmatInput` and `rawresInput` instead of advising a re-run with
+  a covariance step -- unhelpful guidance for the models SIR exists to serve.
+
+* `runSIR()` now verifies before sampling that it can reproduce the fit's own
+  objective at the fit's own estimates, and aborts naming both values if not.
+  Importance sampling assumes one fixed target; candidates are scored by a
+  fresh FOCEi evaluation, which is not guaranteed to be the surface that
+  produced `fit$objf`. The tolerance is `runSIRControl(objfTolerance =)`.
+
+* `runSIR()` now accepts only `focei` fits, and says so before doing any work.
+  A SAEM fit's objective comes from Gaussian quadrature: on `theo_sd` it is
+  208.512 against 205.820 from a FOCEi reevaluation, a 2.69 unit gap. That is a
+  different likelihood, not numerical noise, and with `recenter = TRUE` the run
+  would have "found" a better optimum from the offset alone.
+
+* Recentring now moves the dOFV reference as well as the proposal centre, and
+  the reference is persisted in the run state so recovery and `addIterations`
+  resume from it. Previously every dOFV stayed measured against the original
+  `fit$objf`, leaving later iterations, the negative-dOFV counts, and the
+  chi-square convergence diagnostic pinned to an optimum the run had already
+  superseded. Within a single iteration nothing changes, because a constant
+  dOFV shift cancels in the normalised weights.
+
+* Empirical proposal summaries no longer include the synthetic centre row that
+  `runSIR()` writes to the raw results. Raw results gain a `role` column
+  (`"reference"` / `"sample"`), and the dOFV curves, interval, and RSE
+  diagnostics all exclude the reference row, as PsN does. The centre is not a
+  draw from the proposal, and counting it biased quantiles, intervals,
+  covariances, and RSEs — by up to 2.6 percentage points of RSE on an
+  eight-sample iteration.
+
+* `sirSummary()` reports `rse_sd_scale` only for OMEGA diagonals, and `NA` for
+  off-diagonals. The delta-method relation `RSE(sqrt(v)) ~= RSE(v)/2` needs a
+  positive variance; an off-diagonal is a covariance, which can be negative or
+  zero and has no standard-deviation counterpart. Use the empirical
+  correlations in the `sdCorMatrix` attribute instead.
+
 # nlmixr2sir 0.3
 
 * SIR now derives its parameter vector from a single internal description of the fit instead of re-deriving THETA, sigma, and OMEGA names independently in each function. This fixes `runSIR()` aborting with `Assertion on 'mu' failed: Contains missing values` against nlmixr2est 7, where `fit$cov` reports OMEGA alongside THETA and the old proposal mean came back `NA` for every OMEGA element.

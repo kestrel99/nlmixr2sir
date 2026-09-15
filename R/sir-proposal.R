@@ -42,10 +42,20 @@ sirGetProposalCov <- function(
 
   cov_mat <- fit$cov
   if (is.null(cov_mat) || nrow(cov_mat) == 0L) {
+    # There is no automatic route out of this one. A missing OMEGA or SIGMA
+    # block can be filled, because the Wishart-style approximation derives it
+    # from the OMEGA estimates and the subject count -- real information. THETA
+    # uncertainty has no such source: a fit that never ran a covariance step
+    # carries none, and inventing it from an assumed RSE would fabricate
+    # exactly the quantity SIR is meant to measure. So the user has to say
+    # where the proposal comes from.
     cli::cli_abort(c(
-      "No covariance matrix found in {.arg fit}.",
-      "i" = "Re-run the model with a successful covariance step.",
-      "i" = "Example: {.code foceiControl(covMethod = \"r\")}"
+      "No covariance matrix in {.arg fit}, so SIR has no proposal to start from.",
+      "i" = "A failed covariance step is a normal reason to run SIR, so supply the proposal another way:",
+      "*" = "{.code runSIRControl(rseTheta =)} builds a diagonal proposal from relative standard errors.",
+      "*" = "{.code runSIRControl(covmatInput =)} takes a covariance matrix, a NONMEM {.file .cov} file, or {.val identity}.",
+      "*" = "{.code runSIRControl(rawresInput =)} seeds the proposal from existing parameter vectors.",
+      "i" = "Or refit with a covariance step, for example {.code foceiControl(covMethod = \"r\")}."
     ))
   }
 
@@ -246,9 +256,11 @@ sirGetProposalCov <- function(
       omegaDf = omegaDf
     )
     if (anyNA(se[missingNames])) {
+      naNames <- missingNames[is.na(se[missingNames])]
       cli::cli_abort(c(
-        "No uncertainty available for SIR parameter{?s} {.val {missingNames[is.na(se[missingNames])]}}.",
-        "i" = "Re-run the model with a successful covariance step."
+        "No uncertainty available for SIR parameter{?s} {.val {naNames}}.",
+        "i" = "Missing OMEGA and SIGMA blocks can be approximated, but THETA uncertainty cannot be derived from the fit alone.",
+        "i" = "Supply it with {.code runSIRControl(rseTheta =)}, {.code covmatInput}, or {.code rawresInput}, or refit with a covariance step."
       ))
     }
     diag(covFull)[match(missingNames, fullNames)] <- se[missingNames]^2
@@ -274,7 +286,9 @@ sirGetProposalCov <- function(
   }
 
   covFull <- .sirCapCovCorrelation(covFull, capCorrelation = capCorrelation)
-  covFull <- .sirEnsurePosDef(covFull)
+  repaired <- .sirEnsurePosDef(covFull, report = TRUE)
+  covFull <- repaired$covMat
+  posDefAdjusted <- repaired$adjusted
 
   list(
     mu = muFull,
@@ -282,7 +296,8 @@ sirGetProposalCov <- function(
     paramSpace = ps,
     paramNames = fullNames,
     omegaRoute = route,
-    fallbackNames = missingNames
+    fallbackNames = missingNames,
+    posDefAdjusted = posDefAdjusted
   )
 }
 

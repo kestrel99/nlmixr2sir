@@ -357,12 +357,10 @@
       "i" = "{nrow(mat)} row{?s} survived {.arg offsetRawres} and {.arg inFilter}."
     ))
   }
-  if (nrow(mat) <= ncol(mat)) {
-    cli::cli_warn(c(
-      "Only {nrow(mat)} raw-results vectors for {ncol(mat)} parameters.",
-      "i" = "The empirical covariance is rank deficient and will be forced positive definite."
-    ))
-  }
+  # PsN validates raw-results rank before using it, and so do we. Naming the
+  # raw-results source here is more use than the generic message
+  # sirUpdateProposal() would raise a moment later.
+  .sirCheckProposalRank(mat, what = "raw-results")
   updated <- sirUpdateProposal(
     mat,
     boxcox = boxcox,

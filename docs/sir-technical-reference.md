@@ -1,8 +1,7 @@
 # `nlmixr2sir` technical reference
 
 This document describes the sampling importance resampling (SIR) procedure
-implemented by `nlmixr2sir`. It is a user-facing specification of the current
-source code, not a general recipe for parameter-uncertainty estimation. Source
+implemented by `nlmixr2sir`. Source
 references name functions rather than line numbers so that they remain useful
 as the package evolves.
 
@@ -25,25 +24,34 @@ iteration:
 5. rebuilds $g$ from the empirical covariance of the resampled vectors,
    feeding the next iteration.
 
-The retained vectors after the final iteration are the deliverable. They
-support nonparametric intervals, an empirical covariance, and — unlike a
-normal approximation — asymmetric intervals.
+The retained vectors after the final iteration are the product. They
+support nonparametric intervals, an empirical covariance, and asymmetric intervals.
 
-The method is due to [Dosne, Bergstrand, Harling & Karlsson
+The method is based on that of [Dosne, Bergstrand, Harling & Karlsson
 (2016)](https://doi.org/10.1007/s10928-016-9487-8), which introduced SIR for
 this purpose and characterised its behaviour against the covariance step,
 bootstrap, and log-likelihood profiling. The iterative, self-tuning form
-implemented here — repeated rounds with the proposal rebuilt each time, sample
-counts compensated for evaluation failures — follows [Dosne, Bergstrand &
+implemented here (repeated rounds with the proposal rebuilt each time, sample
+counts compensated for evaluation failures) follows [Dosne, Bergstrand &
 Karlsson (2017)](https://doi.org/10.1007/s10928-017-9542-0). See
 [Literature](#literature).
 
-What the output is **not**: it is not a Bayesian posterior (there is no prior,
+The output is not a Bayesian posterior (there is no prior,
 and the target is the likelihood surface around the maximum likelihood
 estimate), it is not a bootstrap (the data are never resampled), and it does
 not correct a misspecified model. A SIR interval is a statement about
 parameter uncertainty under the fitted model, conditional on that model being
 the right one.
+
+Saying "the likelihood surface" is not quite enough to pin the target down.
+Once a likelihood is normalized and treated as a density over parameters, a
+base measure has been chosen, and a measure that is flat in $\psi$ is not flat
+in a transform of $\psi$. **The target here is the normalized likelihood with
+respect to a flat measure on nlmixr2's own parameter scale** — the scale the
+`ini` block is written in. That choice is what the Box-Cox Jacobian in
+[Proposal update and Box-Cox](#proposal-update-and-box-cox) enforces, and it is
+what makes the retained distribution invariant to re-expressing the model in
+another smooth parameterization.
 
 ## Public interface
 
@@ -68,8 +76,6 @@ sir <- runSIR(
 
 ## The parameter vector
 
-Three naming conventions meet in this package, and deriving them independently
-in each consumer is what once let the code paths drift apart.
 [`.sirParamSpace()`](../R/sir-paramspace.R) is the single source of truth: one
 row per estimated, non-fixed parameter, carrying every name that parameter is
 known by.
@@ -83,16 +89,15 @@ known by.
 
 Rows are ordered THETA, then residual error, then the OMEGA lower triangle by
 column and then row. That ordering reproduces `rownames(fit$cov)` exactly, so
-the fitted covariance can be consumed without reordering; it also coincides
-with PsN's `parameter_hash` order, which makes positional comparison against
-PsN output meaningful.
+the fitted covariance can be consumed without reordering, and coincides
+with PsN's `parameter_hash` order, which facilitates positional comparison against
+PsN output if needed.
 
-Two details matter for correctness. OMEGA off-diagonals are ordered
-`(neta1, neta2)`, not alphabetically, and eta names may contain periods — so
+OMEGA off-diagonals are ordered
+`(neta1, neta2)`, not alphabetically, and eta names may contain periods. This means
 `cov.eta.cl.eta.ka` cannot be split back unambiguously. Every name is derived
-from the eta index pair, never parsed. And `kind == "sigma"` is decided
-structurally from `iniDf$err`, not from absence from `fit$cov`; the latter
-silently changed meaning when `nlmixr2est` began reporting OMEGA in `fit$cov`.
+from the eta index pair, and is never parsed. `kind == "sigma"` is decided
+structurally from `iniDf$err`, not from absence from `fit$cov`.
 
 ## The initial proposal
 
@@ -103,7 +108,7 @@ by precedence.
 
 ### From the fitted covariance
 
-The default. Since `nlmixr2est` 7, `foceiControl(covFull = TRUE)` is the
+This is the default. Since `nlmixr2est` 7, `foceiControl(covFull = TRUE)` is the
 default and `fit$cov` spans THETA, residual error, and OMEGA jointly, so
 
 $$
@@ -111,15 +116,14 @@ $$
   \qquad \widehat V = \texttt{fit\$cov},
 $$
 
-including the estimated THETA-OMEGA correlations. A block-diagonal
-construction discards those correlations and is therefore needlessly wide in
-exactly the directions SIR must then claw back over subsequent iterations.
+including the estimated THETA-OMEGA correlations. 
 
 ### Wishart-style fallback
 
-When `fit$cov` does not carry OMEGA — `covFull = FALSE`, a failed covariance
-step, or `covMethod = ""` — or when `omegaFallback = "wishart"` forces it,
-OMEGA uncertainty is approximated with $df = n_{\text{sub}} - 1$ by default:
+When `fit$cov` is present but does not include OMEGA (`covFull = FALSE`, or a
+partial covariance), or when `omegaFallback = "wishart"` forces the route even
+though OMEGA is available, OMEGA uncertainty is approximated with
+$df = n_{\text{sub}} - 1$ by default:
 
 $$
   \operatorname{Var}(\widehat\Omega_{jj}) = \frac{2\widehat\Omega_{jj}^2}{df},
@@ -129,13 +133,23 @@ $$
             + \widehat\Omega_{jk}^2}{df}.
 $$
 
-This route gives a block-diagonal proposal. Which route was taken is reported
+This route gives a block-diagonal proposal. The route taken is reported
 in the run log and on the returned object.
+
+**It completes an incomplete covariance; it does not replace an absent one.**
+A fit with `covMethod = ""`, or whose covariance step failed, has
+`fit$cov == NULL`. The approximation above needs only the OMEGA estimates and
+the subject count, so OMEGA uncertainty would still be available -- but nothing
+in such a fit supplies THETA uncertainty, and normalising a likelihood over a
+THETA whose scale was assumed rather than estimated would fabricate the very
+quantity being reported. `runSIR()` therefore stops, naming
+[`rseTheta`](#from-relative-standard-errors), `covmatInput` and `rawresInput`
+as the routes that do carry the missing information.
 
 ### From relative standard errors
 
-`rseTheta`, `rseOmega` and `rseSigma` build a diagonal proposal with no
-covariance step at all, porting PsN's `setup_variancevec_from_rse()`. Diagonal
+`rseTheta`, `rseOmega` and `rseSigma` can be used to build a diagonal proposal with no
+covariance step at all. Diagonal
 variances are $(\mathrm{rse}\cdot\widehat\psi_j/100)^2$. OMEGA off-diagonals
 use
 
@@ -146,17 +160,12 @@ $$
   \operatorname{Var}(\widehat\Omega_{jk})
     = \frac{\widehat\Omega_{jk}^2
             + \widehat\Omega_{jj}\widehat\Omega_{kk}}{N}.
-$$
+$$ 
 
-PsN's documentation describes this off-diagonal rule as choosing the variance
-"so that the correlation from the final estimate is unchanged". Its
-implementation is the Wishart-style expression above, which is not the same
-thing. This package follows the implementation, since that is what PsN runs.
-
-Each argument is a scalar for the whole class or one value per estimated
-element of it. Following PsN, a scalar `rseTheta` fills in an unset `rseOmega`
+Each argument is used for the whole class or one value per estimated
+element of it. A scalar `rseTheta` fills in an unset `rseOmega`
 and `rseSigma`, a vector `rseTheta` does not, and setting `rseOmega` without
-`rseTheta` is an error. Inflation cannot be combined with this route: the RSE
+`rseTheta` is an error. Inflation cannot be combined with this route; the RSE
 already states the width.
 
 ### Supplied directly, or from previous parameter vectors
@@ -164,7 +173,7 @@ already states the width.
 `covmatInput` accepts a matrix, a NONMEM-style `.cov` file, or `"identity"`;
 the last together with inflation is the cheap "any diagonal proposal" route.
 `rawresInput` seeds the first proposal from the parameter vectors in a
-canonical raw-results file — PsN's iteration 0 — taking their empirical mean
+canonical raw-results file, taking their empirical mean
 and covariance, with `offsetRawres` and `inFilter` narrowing which rows are
 used. Any canonical raw-results file works, including one written by
 `nlmixr2boot`.
@@ -172,10 +181,9 @@ used. Any canonical raw-results file works, including one written by
 ## Inflation, correlation capping, and positive-definiteness
 
 Inflation multiplies each parameter's proposal *variance*, preserving
-correlations, and is applied to the initial proposal only — from the second
+correlations, and is applied to the initial proposal only - from the second
 iteration the proposal is the previous empirical covariance and re-inflating
-it each round would compound. [`.sirInflationVector()`](../R/sir-proposal.R)
-ports PsN's `setup_inflation()`: each argument is a scalar or one value per
+it each round would be unhelpful. In [`.sirInflationVector()`](../R/sir-proposal.R), each argument is a scalar or one value per
 *diagonal* element of its class, and an OMEGA off-diagonal is never given a
 factor directly but derives
 
@@ -186,7 +194,7 @@ $$
 which leaves the correlation unchanged when the two factors are equal. The
 rescaling is implemented as
 $\Sigma_{jk} \mapsto \Sigma_{jk}\sqrt{c_j c_k}$, algebraically identical to
-rescaling standard deviations but requiring no `cov2cor()` — which would fail
+rescaling standard deviations but requiring no `cov2cor()`, which would fail
 on a variance of exactly zero, as the Wishart fallback produces for an OMEGA
 element estimated at zero.
 
@@ -288,6 +296,43 @@ profile likelihood. The covariance is then taken on the transformed scale, so
 the next iteration proposes in a space where the parameters are closer to
 normal, and draws are back-transformed before evaluation.
 
+### The change-of-variables Jacobian
+
+Drawing on the transformed scale means the normal density of the draws is
+$q_y$, not the density induced on the original parameter scale. Those differ by
+the Jacobian of the transform:
+
+$$
+  q_x(x) = q_y\bigl(T(x)\bigr)\,\bigl|\det J_T(x)\bigr|.
+$$
+
+The likelihood in the numerator of the importance ratio is a function of $x$,
+so the weight must divide by $q_x$:
+
+$$
+  w(x) \;\propto\; \frac{L(x)}{q_y(T(x))\,\bigl|\det J_T(x)\bigr|}.
+$$
+
+Box-Cox is applied one coordinate at a time, so $J_T$ is diagonal and
+
+$$
+  \log\bigl|\det J_T(x)\bigr|
+    = \sum_j (\lambda_j - 1)\,\log(x_j + \delta_j),
+$$
+
+which is what [`.sirBcLogJacobian()`](../R/sir-boxcox.R) computes. It is passed
+to [`sirCalcWeights()`](../R/sir-weights.R) relative to the proposal centre, so
+`relPDF` remains 1 at the centre and keeps its meaning: the density the weight
+divides by, relative to that centre.
+
+**This is a deliberate divergence from PsN**, which evaluates the transformed
+normal density without a Jacobian (`lib/tool/sir.pm`). Omitting the term
+retains a sample from $L(x)\,|\det J_T(x)|$, so the answer depends on the
+parameterization the model happens to be written in. Importance-sampling a
+known Gamma(3, 1) target through a Box-Cox proposal recovers mean 3.00 and
+second moment 12.00 with the Jacobian, against 2.25 and 7.31 without it, where
+the truth is 3 and 12.
+
 The Box-Cox transform is deliberately **not** applied on the final iteration:
 the last proposal is built on the original scale so the delivered vectors and
 their covariance need no back-transformation.
@@ -300,8 +345,7 @@ With `recenter = FALSE` the same condition warns instead.
 ## Sample count adjustment
 
 Evaluation failures shrink the usable sample, so both counts are compensated
-per iteration, porting PsN's `update_attempted_samples()` and
-`update_actual_resamples()` in [`R/sir-iterate.R`](../R/sir-iterate.R). With
+per iteration ([`R/sir-iterate.R`](../R/sir-iterate.R)). With
 turnout $t$ = successful / requested:
 
 $$
@@ -320,18 +364,15 @@ The attempted count compensates for loss only; the resample count scales on
 gain *or* loss. Turnout for the resample adjustment is measured against the
 originally requested sample count, not the compensated attempted count.
 
-`round()` here is round-half-away-from-zero, PsN's convention, implemented as
+`round()` here is round-half-away-from-zero, implemented as
 [`.sirRound()`](../R/sir-utils.R). R's own `round()` is round-half-to-even and
-disagrees on exact halves — `round(20.5)` is 21 in PsN and 20 in R. Both rules
-are pinned to PsN's oracle sequence: requested 100 samples and 20 resamples
-with successful counts 90, 102, 109, 98 must give attempted 100, 111, 109, 100
-and resamples 18, 20, 22, 20.
+disagrees on exact halves — `round(20.5)` is 21 in nlmixr2sir and 20 in R. 
 
 ## Diagnostics
 
 ### Convergence: dOFV against a reference chi-square
 
-The primary SIR diagnostic, and the reason the method is trusted. For a
+The most informative SIR diagnostic. For a
 quantile grid $q$ stopping short of 1 so the reference stays finite,
 [`.sirDofvCurves()`](../R/sir-convergence.R) draws three curves per iteration:
 
@@ -341,6 +382,34 @@ quantile grid $q$ stopping short of 1 so the reference stays finite,
 | proposal | empirical $\Delta\mathrm{OFV}$ quantiles over all evaluated samples |
 | SIR | empirical $\Delta\mathrm{OFV}$ quantiles over the resampled subset |
 
+
+#### What the reference curve does and does not establish
+
+The chi-square reference is a consequence of regular likelihood asymptotics:
+that $2(\ell(\widehat\psi) - \ell(\psi))$ is approximately $\chi^2_p$ near a
+well-identified interior maximum, with enough subjects for the approximation
+to hold. Read the curve as evidence to interpret, not as a certificate. It can
+mislead when:
+
+- a variance component sits **on or near a boundary** (an OMEGA element
+  estimated at or close to zero), where the asymptotic distribution is not
+  chi-square;
+- a parameter is **weakly identified**, so the likelihood is flat in some
+  direction and the quadratic approximation never applies;
+- the likelihood is **multimodal**, where a single centre describes none of
+  the modes;
+- the likelihood is **non-smooth** in the parameters, for instance through
+  hard bounds or discrete model switches; or
+- the **subject count is small** relative to the number of parameters.
+
+Agreement with the reference is therefore evidence that the importance sample
+has settled, not proof that the interval is correct. In the same vein, the
+percentile intervals in [`sirSummary()`](../R/sir-results.R) are quantiles of
+a likelihood-weighted retained sample. They are not guaranteed to have
+nominal frequentist coverage, and they inherit every one of the conditions
+above. Where coverage matters and these conditions are in doubt, a simulation
+study on the model at hand is the only way to establish it.
+
 Under the asymptotic theory the SIR curve should approach the reference.
 Convergence reads as that curve settling onto it across iterations, with a
 resampling-noise band on the last two iterations obtained by repeating the
@@ -348,10 +417,9 @@ weighted resampling and taking the 2.5th and 97.5th percentiles of the
 resulting curves.
 
 If the first iteration's proposal curve falls *below* the reference for more
-than a quarter of the quantiles, the proposal is too narrow: the vectors SIR
+than a quarter of the quantiles, the proposal is too narrow. The vectors SIR
 would need were never drawn, and resampling cannot manufacture them. The run
-warns and recommends restarting with inflation. This check is PsN's and is
-most of the practical value of the plot.
+warns and recommends restarting with inflation. This check is based on PsN's.
 
 ### Intervals by iteration, and CI asymmetry
 
@@ -375,22 +443,25 @@ is run at all.
 ## Summaries and artifacts
 
 [`sirSummary()`](../R/sir-results.R) reports `estimate`, `mean`, `sd`, `rse`,
-`rse_sd_scale`, and PsN's percentile set — 2.5, 5, 10, 30, 50, 70, 90, 95,
+`rse_sd_scale`, at percentiles 2.5, 5, 10, 30, 50, 70, 90, 95,
 97.5, derived from prediction intervals 0, 40, 80, 90 and 95. Empirical
 covariance, correlation, and standard-deviation/correlation matrices are
 attached as attributes and written to disk.
 
-Two documented differences from PsN. `rse` is a **percentage** where PsN
+While summaries are structured to be similar to PsN's in order to facilitate comparisons, two differences must be highlighted. First, `rse` is a percentage where PsN
 reports a fraction; the returned object records this in an `rseUnits`
-attribute rather than leaving it implicit. And `rse_sd_scale` halves the RSE
-of OMEGA elements only, where PsN halves everything that is not a NONMEM
-THETA: that rule catches `$SIGMA` because NONMEM parameterises residual error
+attribute rather than leaving it implicit. Second, `rse_sd_scale` halves the RSE
+of OMEGA **diagonals** only, whereas PsN halves everything that is not a NONMEM
+THETA. NONMEM parameterises residual error
 as a variance, whereas nlmixr2 parameterises it on the standard-deviation
-scale already, so halving `add.sd` would rescale a quantity that needs no
-rescaling.
+scale, so halving `add.sd` would rescale a quantity that needs no
+rescaling. OMEGA off-diagonals are reported as `NA`: the delta-method relation
+$\operatorname{RSE}(\sqrt v) \approx \tfrac12 \operatorname{RSE}(v)$ needs a
+positive variance, and a covariance can be negative or zero and has no
+standard-deviation counterpart. Use the empirical correlations in the
+`sdCorMatrix` attribute for off-diagonal uncertainty.
 
-A run writes `sir_results.csv`, `summary_iterations.csv` (leading with PsN's
-column names), `<fitName>_sir.cov` and `.sdcorr`, a canonical
+A run writes `sir_results.csv`, `summary_iterations.csv`, `<fitName>_sir.cov` and `.sdcorr`, a canonical
 `raw_results.*` set, `sample_rejection_summary.txt`, and `sir_state.rds`.
 `runSIR()` also registers the empirical covariance so that
 `nlmixr2est::setCov(fit, "sir")` switches the fit's reported uncertainty to
@@ -399,12 +470,36 @@ match `fit$cov` or the covariance is not positive-definite.
 
 ## Persistence, resume and extension
 
-State is written after every iteration. `recover = TRUE` resumes from the last
-completed iteration, returning the stored result unchanged if the schedule was
-already finished. `addIterations = TRUE` appends further iterations to a
-completed run, carrying the existing iterations over rather than recomputing
-them. Seeding is managed per iteration through `nlmixr2utils::withRunSeed()`,
-so a resumed run reproduces the stream it would have had.
+State is written after every iteration, under a versioned schema. Alongside
+it goes a **run fingerprint**: the model text, a digest of the dataset and its
+row count, the estimated parameter set and estimates, the objective and
+estimation method, the sample/resample schedule, and a digest of the
+statistical controls. Worker and thread settings are excluded, because they
+do not change the answer and so must not invalidate a saved run.
+
+`recover = TRUE` resumes from the last completed iteration, returning the
+stored result unchanged if the schedule was already finished -- but only after
+the saved fingerprint matches the current one. A mismatch stops the run and
+names the fields that moved. Without that check, pointing a different fit at
+an existing directory returns a stale result labelled as the new run's, which
+is a provenance failure rather than a caching one.
+
+`addIterations = TRUE` appends further iterations to a completed run, carrying
+the existing iterations over rather than recomputing them. It exempts the
+schedule field, which it deliberately changes, and nothing else.
+
+Directories created by `runSIR()` carry a `sir_manifest.dcf` manifest. It is
+human-readable provenance, and it is also the ownership marker: `runSIR()`
+refuses to recursively clear a non-empty directory that does not have one, so
+an explicitly supplied `directory` cannot be destroyed by accident.
+
+Seeding is managed per iteration through `nlmixr2utils::withRunSeed()`, so a
+resumed run reproduces the stream it would have had.
+
+`runSIRControl(saveFiles = FALSE)` turns all of this off: no directory, no
+files, no state. The result is returned as usual, but recovery,
+`addIterations`, and per-iteration seeding are unavailable, and a single
+`set.seed()` before the call is what makes the run reproducible.
 
 ## Interpretation checklist and limitations
 
@@ -415,7 +510,7 @@ so a resumed run reproduces the stream it would have had.
   or a proposal on the wrong scale.
 - **Check that the last two iterations agree.** If intervals are still moving,
   add iterations or increase sample counts.
-- SIR characterises uncertainty *under the fitted model*. It cannot diagnose
+- SIR characterises uncertainty under the fitted model. It cannot diagnose
   structural misspecification, and a tight SIR interval around a wrong model
   is still wrong.
 - The target is the likelihood surface near $\widehat\psi$. With a
@@ -428,8 +523,8 @@ so a resumed run reproduces the stream it would have had.
 ## Difference from PsN
 
 The algorithm, the sample-count adjustment rules, the inflation semantics, the
-RSE-to-variance conversion and the principal diagnostics follow PsN, and the
-numeric cores are checked against oracle values taken from PsN's own unit
+RSE-to-variance conversion and the principal diagnostics follow those implemented by PsN, and the
+numeric cores are checked against reference values extracted from PsN's own unit
 tests (`test/unit/tool/sir.t`). The implementations diverge in execution:
 PsN generates and runs NONMEM control streams, whereas `nlmixr2sir` calls
 `rxode2::ini()` and `nlmixr2est::nlmixr2()` directly and keys everything by
@@ -442,10 +537,20 @@ NONMEM-execution options — `-mceta`, `-copy_data`, `-problems_per_file`,
 `-nm_version` and similar — have no analogue. A per-option parity matrix is
 kept in the [README](../README.md).
 
-The deliberate numeric differences are the two described under
-[Summaries and artifacts](#summaries-and-artifacts), and the off-diagonal RSE
-rule following PsN's code rather than its documentation, described under
-[From relative standard errors](#from-relative-standard-errors).
+The deliberate differences are:
+
+- **The Box-Cox change-of-variables Jacobian**, described under
+  [The change-of-variables Jacobian](#the-change-of-variables-jacobian). This
+  is an *algorithmic* divergence, not a reporting one: it changes the retained
+  distribution whenever `boxcox = TRUE`, which is the default. PsN omits the
+  term; including it is what makes the target the original-scale normalized
+  likelihood rather than a parameterization-dependent tilt of it.
+- The two reporting differences described under
+  [Summaries and artifacts](#summaries-and-artifacts) — `rse` as a percentage,
+  and the OMEGA-only `rse_sd_scale` rule.
+- The off-diagonal RSE rule following PsN's code rather than its documentation,
+  described under
+  [From relative standard errors](#from-relative-standard-errors).
 
 This comparison is based on PsN's
 [`tool::sir`](https://github.com/UUPharmacometrics/PsN/blob/master/lib/tool/sir.pm),

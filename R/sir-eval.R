@@ -26,6 +26,55 @@
 #' @return Named numeric vector of length `nrow(paramSamples)`.  Entries are
 #'   `NA_real_` for rows that produced an error during evaluation.
 #' @noRd
+# Fields of the fitted control that define or materially affect the value of
+# the objective, as opposed to how it was optimised. Optimisation-only settings
+# need not be carried when maxOuterIterations = 0, but these do: they change
+# the number the evaluator returns.
+#
+#   interaction       FOCEi versus FOCE
+#   addProp           how additive and proportional error combine
+#   adjLik            likelihood constant adjustment
+#   badSolveObjfAdj   the penalty applied to a failed solve -- candidate
+#                     dependent, so a mismatch changes the shape of the target
+#   rxControl         ODE solver method and tolerances
+#   sumProd, optExpression, literalFix, sigdig
+#                     expression handling and derived tolerances
+.sirLikelihoodControlFields <- c(
+  "interaction", "addProp", "adjLik", "badSolveObjfAdj", "rxControl",
+  "sumProd", "optExpression", "literalFix", "sigdig"
+)
+
+# Build the fixed-parameter evaluator's control by carrying the fitted model's
+# likelihood-relevant settings forward, rather than accepting foceiControl()'s
+# defaults for all of them. A fresh default control is a different objective
+# whenever the fit used anything but the defaults.
+.sirEvalControl <- function(fit) {
+  base <- fit$control
+  args <- if (is.list(base)) {
+    keep <- intersect(.sirLikelihoodControlFields, names(base))
+    as.list(base)[keep]
+  } else {
+    list()
+  }
+  # Evaluation-only overrides. These control what the call does, not what the
+  # objective means, so they are always ours.
+  args$calcTables <- FALSE
+  args$covMethod <- ""
+  args$compress <- FALSE
+  args$maxOuterIterations <- 0L
+  args$print <- 0L
+  tryCatch(
+    do.call(nlmixr2est::foceiControl, args),
+    error = function(e) {
+      cli::cli_abort(c(
+        "Could not reconstruct the fit's objective settings for evaluation.",
+        "x" = conditionMessage(e),
+        "i" = "SIR must score candidates on the same likelihood that produced {.code fit$objf}."
+      ))
+    }
+  )
+}
+
 sirEvalOFV <- function(fit, paramSamples, workers = NULL, rxThreads = NULL) {
   checkmate::assertClass(fit, "nlmixr2FitCore")
   checkmate::assertMatrix(
@@ -55,6 +104,9 @@ sirEvalOFV <- function(fit, paramSamples, workers = NULL, rxThreads = NULL) {
 
   base_omega <- fit$omega
   base_theta <- fit$theta
+  # Built once: it is the same objective for every candidate, and that is the
+  # whole point.
+  evalControl <- .sirEvalControl(fit)
 
   eval_one <- function(i) {
     row <- paramSamples[i, ]
@@ -95,13 +147,7 @@ sirEvalOFV <- function(fit, paramSamples, workers = NULL, rxThreads = NULL) {
           nlmixr2est::nlmixr2(
             model_new,
             est = "focei",
-            control = nlmixr2est::foceiControl(
-              calcTables = FALSE,
-              covMethod = "",
-              compress = FALSE,
-              maxOuterIterations = 0L,
-              print = 0L
-            )
+            control = evalControl
           )
         )
         list(objf = f$objf, error = NA_character_)

@@ -52,7 +52,7 @@
   perIter <- lapply(seq_along(iterations), function(i) {
     raw <- iterations[[i]]$rawResults
     # One row per resample slot, so a vector selected twice counts twice.
-    proposalDofv <- raw$deltaofv[!duplicated(raw$sample_id)]
+    proposalDofv <- .sirProposalRows(raw)$deltaofv
     sirDofv <- raw$deltaofv[raw$resamples > 0L]
     rbind(
       .sirQuantileFrame(proposalDofv, quant, i, "proposal"),
@@ -97,7 +97,7 @@
 ) {
   iterations <- attr(x, "iterations", exact = TRUE)
   raw <- iterations[[iteration]]$rawResults
-  base <- raw[!duplicated(raw$sample_id), , drop = FALSE]
+  base <- .sirProposalRows(raw)
   nResample <- sum(raw$resamples > 0L)
   ok <- !is.na(base$deltaofv) &
     is.finite(base$importance_ratio) &
@@ -106,18 +106,37 @@
   if (nrow(base) < 2L || nResample < 2L) {
     return(NULL)
   }
-  replace <- capResampling > 1 || nResample > nrow(base)
+  # Replicates go through sirResample() itself rather than a local
+  # sample.int() call. The local version treated any cap above one as unlimited
+  # replacement, while sirResample() expands each candidate into a finite number
+  # of slots -- so the band described a different resampler from the one that
+  # produced the retained sample, which is the one thing a noise band must not
+  # do.
+  cap <- max(1L, as.integer(floor(capResampling)))
+  usable <- sum(base$importance_ratio > 0)
+  draws <- min(nResample, usable * cap)
+  if (draws < 2L) {
+    return(NULL)
+  }
+  weights <- data.frame(
+    prob_resample = base$importance_ratio / sum(base$importance_ratio)
+  )
+  dofvMat <- matrix(
+    base$deltaofv,
+    ncol = 1L,
+    dimnames = list(NULL, "deltaofv")
+  )
 
   curves <- vapply(
     seq_len(nReplicate),
     function(i) {
-      idx <- sample.int(
-        nrow(base),
-        size = min(nResample, if (replace) nResample else nrow(base)),
-        replace = replace,
-        prob = base$importance_ratio
-      )
-      unname(stats::quantile(base$deltaofv[idx], probs = quant, na.rm = TRUE))
+      drawn <- sirResample(
+        dofvMat,
+        weights,
+        m = draws,
+        capResampling = cap
+      )$samples[, 1L]
+      unname(stats::quantile(drawn, probs = quant, na.rm = TRUE))
     },
     numeric(length(quant))
   )
@@ -129,6 +148,14 @@
     high = apply(curves, 1L, stats::quantile, probs = 0.975, na.rm = TRUE),
     stringsAsFactors = FALSE
   )
+}
+
+# The resampling cap the run actually used. Stored on the result by runSIR();
+# falls back to PsN's default of one for an object built without it.
+.sirEffectiveCap <- function(x) {
+  ctl <- attr(x, "control", exact = TRUE)
+  cap <- if (is.null(ctl)) NULL else ctl$capResampling
+  if (is.null(cap) || !is.finite(cap)) 1 else cap
 }
 
 # PsN's automatic warning: if the first iteration's proposal curve falls below
@@ -184,7 +211,15 @@
     want <- utils::tail(seq_along(iterations), 2L)
     ribbon <- do.call(
       rbind,
-      lapply(want, function(i) .sirDofvNoise(x, i, quant, nReplicate))
+      lapply(want, function(i) {
+        .sirDofvNoise(
+          x,
+          i,
+          quant,
+          nReplicate,
+          capResampling = .sirEffectiveCap(x)
+        )
+      })
     )
   }
 

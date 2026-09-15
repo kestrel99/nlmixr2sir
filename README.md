@@ -35,10 +35,20 @@ directly (`omegaFallback = "cov"`, the default), which means the initial
 proposal carries the **correlations between THETA and OMEGA** rather than
 treating the two as independent blocks.
 
-When `fit$cov` does not carry OMEGA -- a fit run with `covFull = FALSE`, a
-failed covariance step, or `covMethod = ""` -- `nlmixr2sir` falls back
-automatically to a Wishart-style approximation, and `omegaFallback = "wishart"`
-forces it. The fallback takes the free lower-triangular OMEGA elements and, with
+When `fit$cov` is present but does not carry OMEGA -- a fit run with
+`covFull = FALSE`, or a partial covariance -- `nlmixr2sir` fills the missing
+block automatically with a Wishart-style approximation, and
+`omegaFallback = "wishart"` forces that route even when OMEGA is available.
+
+This automatic fallback completes an **incomplete** covariance. It cannot
+replace an **absent** one. A fit with `covMethod = ""`, or whose covariance step
+failed, has `fit$cov == NULL` and carries no THETA uncertainty at all; the
+Wishart approximation derives OMEGA uncertainty from the OMEGA estimates and
+the subject count, but nothing in the fit supplies THETA. `runSIR()` therefore
+stops and asks for one of `rseTheta`, `covmatInput`, or `rawresInput` -- see
+[Requirements and Practical Notes](#requirements-and-practical-notes) below. Inventing THETA uncertainty
+from a default assumed RSE would fabricate exactly the quantity SIR is there to
+measure. The fallback takes the free lower-triangular OMEGA elements and, with
 `omegaDf = nSubjects - 1` by default, approximates diagonal SEs as
 `sqrt(2 * omega^2 / df)` and off-diagonal SEs as
 `sqrt((omega[i, i] * omega[j, j] + omega[i, j]^2) / df)`. That route gives a
@@ -149,13 +159,26 @@ plot(sir, type = "rsecor")        # RSE / correlation, with CI asymmetry
 plot(sir, type = "parameters")    # resampled parameter distributions
 ```
 
-`type = "convergence"` is the primary diagnostic. For each iteration it draws
-the empirical dOFV quantile curve for the proposal and for the SIR posterior
-against a reference chi-square on the number of estimated parameters.
-Convergence reads as the SIR curve settling onto the reference. If the first
-iteration's proposal falls below the reference for more than a quarter of the
-quantiles, `runSIR()` warns: the proposal is too narrow, and resampling cannot
-recover from that -- restart with inflation.
+`type = "convergence"` is the most informative diagnostic. For each iteration
+it draws the empirical dOFV quantile curve for the proposal and for the
+retained SIR distribution against a reference chi-square on the number of
+estimated parameters. Convergence reads as the SIR curve settling onto the
+reference. If the first iteration's proposal falls below the reference for more
+than a quarter of the quantiles, `runSIR()` warns: the proposal is too narrow,
+and resampling cannot recover from that -- restart with inflation.
+
+The chi-square reference rests on regular likelihood asymptotics, so read it as
+evidence rather than a certificate. It can mislead for variance components on a
+boundary, weakly identified or multimodal parameters, non-smooth likelihoods,
+or a small subject count -- and percentile intervals from a likelihood-weighted
+sample do not automatically have nominal frequentist coverage. The conditions
+are set out in the [technical reference](docs/sir-technical-reference.md).
+
+Each iteration also reports importance-weight diagnostics -- effective sample
+size, its fraction of the usable samples, the largest single weight, and
+perplexity. `runSIR()` warns when the effective sample size falls below 10% of
+the usable samples or one candidate carries more than half the weight: the
+retained sample then rests on less information than its size suggests.
 
 `type = "rsecor"` annotates each parameter's RSE with the confidence-interval
 asymmetry ratio `(high - median) / (median - low)`. A symmetric
@@ -177,7 +200,7 @@ cannot express that asymmetry, which is a large part of why SIR is run at all.
 | `-theta_inflation` etc., scalar or vector | `thetaInflation` etc. | supported |
 | `-inflate_only_diagonal` semantics | always applied | supported |
 | `-recenter` | `recenter` | supported |
-| `-boxcox` | `boxcox` | supported |
+| `-boxcox` | `boxcox` | partial — deliberate divergence, see below |
 | `-cap_resampling` | `capResampling` | supported |
 | `-cap_correlation` | `capCorrelation` | supported |
 | `-add_iterations` | `addIterations` | supported |
@@ -197,16 +220,41 @@ Numeric parity for the sample/resample adjustment, the inflation vector and
 the RSE-to-variance conversion is checked against oracle values taken from
 PsN's own unit tests.
 
-Two deliberate differences. `sirSummary()` reports `rse` as a **percentage**
-where PsN reports a fraction. And `rse_sd_scale` halves the RSE of OMEGA
-elements only: PsN halves everything that is not a NONMEM THETA, which catches
-`$SIGMA` because NONMEM parameterises residual error as a variance, whereas
-nlmixr2 parameterises it on the standard-deviation scale already.
+### Deliberate differences from PsN
+
+**Box-Cox includes the change-of-variables Jacobian.** With `boxcox = TRUE`,
+candidates are drawn on a transformed scale and mapped back, so the density
+induced on the original parameter scale is
+`q_x(x) = q_y(T(x)) * |det J_T(x)|`. nlmixr2sir divides the likelihood by
+`q_x`; PsN divides by `q_y`, omitting the Jacobian. Omitting it retains a
+sample from `L(x)|det J_T(x)|` rather than `L(x)`, so the answer depends on
+which smooth parameterization the model happens to be written in — exactly for
+the skewed and weakly identified parameters Box-Cox is meant to help with.
+
+The size of the effect is not subtle. Importance-sampling a known Gamma(3, 1)
+target through a Box-Cox proposal recovers a mean of 3.00 and a second moment
+of 12.00 with the Jacobian (truth 3 and 12), against 2.25 and 7.31 without it.
+`tests/testthat/test-sir-boxcox-jacobian.R` holds that simulation plus the
+analytic one-dimensional checks.
+
+So SIR here targets the normalized likelihood **on nlmixr2's own parameter
+scale**, and the retained distribution does not move if you re-express the
+model in another smooth parameterization. That is the estimand; it is a
+different one from PsN's, and it is why `-boxcox` is marked partial above.
+
+**`rse` is a percentage** where PsN reports a fraction.
+
+**`rse_sd_scale` halves the RSE of OMEGA diagonals only.** PsN halves
+everything that is not a NONMEM THETA, which catches `$SIGMA` because NONMEM
+parameterises residual error as a variance, whereas nlmixr2 parameterises it on
+the standard-deviation scale already. Off-diagonals are `NA`: a covariance can
+be negative or zero and has no standard-deviation counterpart.
 
 ## Requirements and Practical Notes
 
-`runSIR()` no longer requires a successful covariance step. When `fit$cov` is
-unavailable, supply the proposal another way:
+`runSIR()` does not require a successful covariance step, but it does require
+a proposal. When `fit$cov` is unavailable the run stops and names these three
+routes; pick one and supply it:
 
 ```r
 # from relative standard errors
@@ -219,6 +267,33 @@ runSIR(fit, control = runSIRControl(covmatInput = "identity",
 # seeded from the parameter vectors in a raw-results file
 runSIR(fit, control = runSIRControl(rawresInput = "raw_results.csv"))
 ```
+
+### Run directories, recovery, and running without files
+
+A directory created by `runSIR()` carries a `sir_manifest.dcf` file recording
+what produced it -- package version, fit, schedule, parameters, estimation
+method, data rows, dependency versions, and seed. That manifest is also what
+marks the directory as this package's: `runSIR()` refuses to clear a non-empty
+directory that does not have one, so pointing `directory` at something valuable
+cannot destroy it.
+
+`recover = TRUE` (the default) resumes a run from its saved state, but only
+after checking that the state belongs to the run being asked for. The fingerprint
+covers the model, data, parameter set, estimates, objective, estimation method,
+schedule, and statistical controls; a mismatch stops the run and names the
+fields that changed rather than handing back another run's result. Worker and
+thread settings are deliberately excluded -- they do not change the answer.
+
+To run without touching the filesystem at all:
+
+```r
+runSIR(fit, control = runSIRControl(saveFiles = FALSE))
+```
+
+Nothing is written and no directory is created. The result is returned as usual
+and `setCov()` registration still works, but recovery, `addIterations`, and
+per-iteration seed reproduction all need the saved state; use `set.seed()`
+before the call to make such a run reproducible.
 
 For practical use:
 

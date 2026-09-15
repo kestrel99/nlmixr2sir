@@ -246,3 +246,101 @@ test_that("PsN illegal setup_variancevec cases are rejected", {
     "one value per"
   )
 })
+
+# PsN's multivariate-normal density oracle ------------------------------------
+#
+# Source: PsN test/unit/tool/sir.t, the mvnpdf_cholesky block (approx. lines
+# 238-262). These are the values PsN itself checks against Matlab's mvnpdf.
+#
+# This is the oracle that matters most: sirCalcWeights() divides the likelihood
+# ratio by exactly this density, so an error here misprices every candidate.
+# It is deliberately *correlated* -- a diagonal covariance cannot distinguish a
+# Cholesky solve from its transpose, which is why the existing relPDF tests
+# passed while the quadratic form was wrong.
+
+.psnMvnSigma <- matrix(
+  c(
+    3.0, 0.1, 0.2,
+    0.1, 8.0, 0.3,
+    0.2, 0.3, 2.0
+  ),
+  nrow = 3L,
+  ncol = 3L,
+  byrow = TRUE
+)
+
+test_that("PsN oracle: relative MVN density for a correlated covariance", {
+  mu <- c(1, 2, 3)
+  x <- matrix(c(0, 0, 0), nrow = 1L)
+
+  res <- sirCalcWeights(x, mu = mu, covMat = .psnMvnSigma, dOFV = 0)
+
+  expect_equal(res$relPDF[1L], 0.08373785511747776, tolerance = 1e-12)
+})
+
+test_that("relative MVN density equals the explicit Mahalanobis form", {
+  mu <- c(1, 2, 3)
+  pts <- matrix(
+    c(
+      0, 0, 0,
+      1, 2, 3,
+      -2, 5, 1.5,
+      4.25, -1, 0.75
+    ),
+    ncol = 3L,
+    byrow = TRUE
+  )
+
+  res <- sirCalcWeights(
+    pts,
+    mu = mu,
+    covMat = .psnMvnSigma,
+    dOFV = rep(0, nrow(pts))
+  )
+
+  inv <- solve(.psnMvnSigma)
+  expected <- apply(pts, 1L, function(z) {
+    d <- z - mu
+    exp(-0.5 * as.numeric(t(d) %*% inv %*% d))
+  })
+
+  expect_equal(res$relPDF, expected, tolerance = 1e-12)
+})
+
+test_that("relative MVN density matches mvtnorm::dmvnorm up to the constant", {
+  skip_if_not_installed("mvtnorm")
+  set.seed(20260914)
+  p <- 4L
+  a <- matrix(stats::rnorm(p * p), p, p)
+  sigma <- crossprod(a) + diag(p) # positive definite by construction
+  mu <- stats::rnorm(p)
+  pts <- matrix(stats::rnorm(6L * p), ncol = p)
+
+  res <- sirCalcWeights(pts, mu = mu, covMat = sigma, dOFV = rep(0, nrow(pts)))
+
+  # dmvnorm carries the normalising constant; the density at mu is that
+  # constant, so the ratio is exactly relPDF.
+  expected <- exp(
+    mvtnorm::dmvnorm(pts, mean = mu, sigma = sigma, log = TRUE) -
+      mvtnorm::dmvnorm(t(mu), mean = mu, sigma = sigma, log = TRUE)
+  )
+
+  expect_equal(res$relPDF, as.numeric(expected), tolerance = 1e-10)
+})
+
+test_that("a diagonal covariance cannot detect the transposed solve", {
+  # Pins the reason the bug survived: with a diagonal covariance the Cholesky
+  # factor is its own transpose, so both solves agree. This test documents the
+  # blind spot rather than guarding behaviour.
+  mu <- c(1, 2, 3)
+  x <- matrix(c(0, 0, 0), nrow = 1L)
+  d <- diag(c(3.0, 8.0, 2.0))
+
+  res <- sirCalcWeights(x, mu = mu, covMat = d, dOFV = 0)
+
+  expect_equal(
+    res$relPDF[1L],
+    exp(-0.5 * sum((x[1L, ] - mu)^2 / c(3.0, 8.0, 2.0))),
+    tolerance = 1e-12
+  )
+})

@@ -44,6 +44,7 @@ vignettes/*.pdf
 # directory, so a negation under docs/ would never be reached.
 docs/*
 !docs/sir-technical-reference.md
+!docs/nlmixr2sir-critical-review.md
 
 # translation temp files
 po/*~

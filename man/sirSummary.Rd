@@ -21,8 +21,12 @@ prediction intervals 0, 40, 80, 90 and 95.
 
 \code{rse} is a \strong{percentage}; PsN reports the same quantity as a fraction.
 \code{rse_sd_scale} is \code{rse / 2}, the RSE of a variance expressed on the
-standard-deviation scale, and is \code{NA} for parameters that are not
-variances. Note this differs from PsN, which halves everything that is
+standard-deviation scale. It is reported only for OMEGA \strong{diagonals} and
+is \code{NA} everywhere else, including OMEGA off-diagonals: a covariance can
+be negative or zero and has no standard-deviation counterpart, so halving
+its RSE would not mean anything. For off-diagonal uncertainty, use the
+empirical correlations in the \code{sdCorMatrix} attribute.
+Note this differs from PsN, which halves everything that is
 not a NONMEM THETA: nlmixr2 parameterises residual error on the SD scale
 already, so halving \code{add.sd} would rescale a quantity that needs no
 rescaling.

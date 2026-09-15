@@ -2,8 +2,8 @@
 # RSE/correlation matrix plot. Ported from PsN R-scripts/sir_default.R.
 
 # Per-parameter interval for every iteration, for the proposal (all evaluated
-# samples) and for the SIR posterior (the resampled subset). Shows whether the
-# uncertainty has stopped moving between iterations.
+# samples) and for the retained SIR distribution (the resampled subset). Shows
+# whether the uncertainty has stopped moving between iterations.
 .sirIterationIntervals <- function(x, ci = 95) {
   checkmate::assertNumber(ci, lower = 50, upper = 100)
   iterations <- attr(x, "iterations", exact = TRUE)
@@ -16,10 +16,9 @@
   out <- lapply(seq_along(iterations), function(i) {
     raw <- iterations[[i]]$rawResults
     params <- colnames(iterations[[i]]$resampledMat)
-    unique_rows <- !duplicated(raw$sample_id)
     rbind(
       .sirIntervalFrame(
-        raw[unique_rows, , drop = FALSE],
+        .sirProposalRows(raw),
         params,
         i,
         "proposal",
@@ -117,12 +116,12 @@
   }
 
   # PsN compares the first iteration's proposal against the last iteration's
-  # SIR posterior.
+  # retained SIR distribution.
   intervals <- .sirIterationIntervals(x, ci = ci)
   if (identical(which, "proposal")) {
     iter <- 1L
     raw <- iterations[[1L]]$rawResults
-    rows <- raw[!duplicated(raw$sample_id), , drop = FALSE]
+    rows <- .sirProposalRows(raw)
   } else {
     iter <- length(iterations)
     raw <- iterations[[iter]]$rawResults

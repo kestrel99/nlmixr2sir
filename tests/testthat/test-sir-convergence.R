@@ -315,3 +315,208 @@ test_that(".sirWriteCovMatrices exports the covariance and sd/correlation", {
     ignore_attr = TRUE
   )
 })
+
+# R4: the synthetic reference row must not enter empirical proposal summaries --
+#
+# .sirBuildRawResults() prepends a row holding the proposal centre itself
+# (sample_id 0, dOFV 0, no resamples). It belongs in the written raw-results
+# file, because PsN writes it too, but it is not a draw from the proposal and
+# must not be counted as one. PsN drops it before summarising for exactly this
+# reason (R-scripts/sir_default.R).
+
+test_that(".sirBuildRawResults marks the centre row as a reference row", {
+  skip_on_cran()
+  raw <- iter1()$rawResults
+  expect_true("role" %in% names(raw))
+  expect_identical(raw$role[raw$sample_id == 0L], "reference")
+  expect_true(all(raw$role[raw$sample_id != 0L] == "sample"))
+})
+
+test_that("proposal dOFV quantiles exclude the reference row", {
+  skip_on_cran()
+  it <- iter1()
+  raw <- it$rawResults
+  curves <- .sirDofvCurves(sirObj(), quant = seq(0.01, 0.99, by = 0.01))
+  got <- curves$dOFV[curves$type == "proposal"]
+
+  # The proposal sample is the distinct candidates, with the centre removed.
+  drawn <- raw[raw$role == "sample" & !duplicated(raw$sample_id), , drop = FALSE]
+  expected <- unname(stats::quantile(
+    drawn$deltaofv[!is.na(drawn$deltaofv)],
+    probs = seq(0.01, 0.99, by = 0.01),
+    na.rm = TRUE
+  ))
+
+  expect_equal(got, expected, tolerance = 1e-12)
+  # The centre contributes an exact zero; keeping it shifts the low quantiles.
+  expect_false(0 %in% drawn$deltaofv)
+})
+
+test_that("proposal intervals and RSEs exclude the reference row", {
+  skip_on_cran()
+  obj <- sirObj()
+  raw <- iter1()$rawResults
+  params <- colnames(iter1()$resampledMat)
+
+  intervals <- .sirIterationIntervals(obj, ci = 95)
+  prop <- intervals[intervals$type == "proposal", , drop = FALSE]
+  drawn <- raw[raw$role == "sample" & !duplicated(raw$sample_id), , drop = FALSE]
+
+  p1 <- params[[1L]]
+  expect_equal(
+    prop$median[prop$param == p1],
+    unname(stats::quantile(drawn[[p1]], probs = 0.5, na.rm = TRUE)),
+    tolerance = 1e-12
+  )
+
+  # .sirRseCorData() puts RSEs on the diagonal of its grid; those come from the
+  # proposal covariance, so they move if the centre row is counted.
+  rc <- .sirRseCorData(obj, which = "proposal", ci = 95)
+  cm <- stats::cov(as.matrix(drawn[, params, drop = FALSE]))
+  estimate <- stats::setNames(obj$estimate, obj$param)[params]
+  expected_rse <- 100 * abs(sqrt(diag(cm)) / estimate)
+
+  got <- rc$value[rc$isDiagonal][match(params, as.character(rc$row[rc$isDiagonal]))]
+  expect_equal(got, unname(expected_rse), tolerance = 1e-12)
+})
+
+# R3: recentring must move the dOFV reference, not just the proposal centre ----
+#
+# When a candidate beats the fitted optimum, PsN moves both the centre and
+# reference_ofv (lib/tool/sir.pm). Moving only the centre leaves every later
+# dOFV, negative-dOFV count, and the chi-square convergence curve measured
+# against an optimum the run has already superseded.
+
+test_that("sirRunIteration accepts and returns a reference OFV", {
+  skip_on_cran()
+  fit <- theoFit()
+  set.seed(42)
+  it <- suppressMessages(sirRunIteration(
+    fit,
+    mu = .sirProposalMu(fit),
+    proposalCov = sirGetProposalCov(fit),
+    nSamples = 16L,
+    nResample = 8L,
+    iterNum = 1L,
+    recenter = TRUE,
+    boxcox = FALSE,
+    directory = NULL
+  ))
+  expect_true("newReferenceOfv" %in% names(it))
+  expect_true(is.finite(it$newReferenceOfv))
+})
+
+test_that("recentring moves the reference OFV to the better optimum", {
+  skip_on_cran()
+  fit <- theoFit()
+  set.seed(42)
+  it <- suppressMessages(sirRunIteration(
+    fit,
+    mu = .sirProposalMu(fit),
+    proposalCov = sirGetProposalCov(fit),
+    nSamples = 16L,
+    nResample = 8L,
+    iterNum = 1L,
+    recenter = TRUE,
+    boxcox = FALSE,
+    directory = NULL
+  ))
+  best <- it$iterSummary$minDOFV
+
+  if (is.finite(best) && best < 0) {
+    # A better optimum was found: the reference must drop by exactly that much.
+    expect_equal(it$newReferenceOfv, fit$objf + best, tolerance = 1e-8)
+  } else {
+    # Nothing beat the fit, so the reference must not move.
+    expect_equal(it$newReferenceOfv, fit$objf, tolerance = 1e-8)
+  }
+})
+
+test_that("a supplied referenceOfv is what dOFV is measured against", {
+  skip_on_cran()
+  fit <- theoFit()
+  shifted <- fit$objf - 10
+
+  set.seed(42)
+  base <- suppressMessages(sirRunIteration(
+    fit,
+    mu = .sirProposalMu(fit),
+    proposalCov = sirGetProposalCov(fit),
+    nSamples = 16L, nResample = 8L, iterNum = 1L,
+    recenter = FALSE, boxcox = FALSE, directory = NULL
+  ))
+  set.seed(42)
+  moved <- suppressMessages(suppressWarnings(sirRunIteration(
+    fit,
+    mu = .sirProposalMu(fit),
+    proposalCov = sirGetProposalCov(fit),
+    nSamples = 16L, nResample = 8L, iterNum = 1L,
+    recenter = FALSE, boxcox = FALSE, directory = NULL,
+    referenceOfv = shifted
+  )))
+
+  # Same draws, reference lowered by 10, so every dOFV rises by 10.
+  expect_equal(
+    moved$rawResults$deltaofv[moved$rawResults$role == "sample"],
+    base$rawResults$deltaofv[base$rawResults$role == "sample"] + 10,
+    tolerance = 1e-8
+  )
+})
+
+test_that("runSIR persists the reference OFV across added iterations", {
+  skip_on_cran()
+  fit <- theoFit()
+  dir <- withr::local_tempdir()
+
+  set.seed(11)
+  suppressMessages(runSIR(
+    fit,
+    nSamples = 16L,
+    nResample = 8L,
+    directory = dir,
+    control = runSIRControl(recover = FALSE, workers = 1L)
+  ))
+
+  state <- nlmixr2utils::readRunState(dir, .sirStateSchema())
+  expect_true("nextReferenceOfv" %in% names(state))
+  expect_true(is.finite(state$nextReferenceOfv))
+
+  # The reference can only ever improve on the fitted optimum, never worsen.
+  expect_lte(state$nextReferenceOfv, fit$objf + 1e-8)
+
+  # It must equal what the last iteration reported, not fit$objf by default.
+  last <- state$iterations[[length(state$iterations)]]
+  expect_equal(state$nextReferenceOfv, last$newReferenceOfv, tolerance = 1e-10)
+})
+
+test_that("added iterations resume from the saved reference OFV", {
+  skip_on_cran()
+  fit <- theoFit()
+  dir <- withr::local_tempdir()
+
+  set.seed(7)
+  suppressMessages(runSIR(
+    fit,
+    nSamples = 16L,
+    nResample = 8L,
+    directory = dir,
+    control = runSIRControl(recover = FALSE, workers = 1L)
+  ))
+  first <- nlmixr2utils::readRunState(dir, .sirStateSchema())$nextReferenceOfv
+
+  set.seed(8)
+  suppressMessages(runSIR(
+    fit,
+    nSamples = 16L,
+    nResample = 8L,
+    directory = dir,
+    control = runSIRControl(addIterations = TRUE, workers = 1L)
+  ))
+  state <- nlmixr2utils::readRunState(dir, .sirStateSchema())
+
+  # The extension starts from where the first run left off, not from fit$objf,
+  # and the reference can only improve.
+  expect_lte(state$nextReferenceOfv, first + 1e-8)
+  added <- state$iterations[[length(state$iterations)]]
+  expect_lte(added$referenceOfv, first + 1e-8)
+})

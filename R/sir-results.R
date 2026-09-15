@@ -92,8 +92,12 @@
 #'
 #'   `rse` is a **percentage**; PsN reports the same quantity as a fraction.
 #'   `rse_sd_scale` is `rse / 2`, the RSE of a variance expressed on the
-#'   standard-deviation scale, and is `NA` for parameters that are not
-#'   variances. Note this differs from PsN, which halves everything that is
+#'   standard-deviation scale. It is reported only for OMEGA **diagonals** and
+#'   is `NA` everywhere else, including OMEGA off-diagonals: a covariance can
+#'   be negative or zero and has no standard-deviation counterpart, so halving
+#'   its RSE would not mean anything. For off-diagonal uncertainty, use the
+#'   empirical correlations in the `sdCorMatrix` attribute.
+#'   Note this differs from PsN, which halves everything that is
 #'   not a NONMEM THETA: nlmixr2 parameterises residual error on the SD scale
 #'   already, so halving `add.sd` would rescale a quantity that needs no
 #'   rescaling.
@@ -140,10 +144,16 @@ sirSummary <- function(resampledMat, fit) {
   # That rule cannot be carried over literally: nlmixr2 parameterises residual
   # error on the SD scale already (add.sd is a standard deviation, not a
   # variance), so halving it would understate a quantity that needs no
-  # rescaling. Only OMEGA elements are halved here.
+  # rescaling. Only OMEGA *diagonals* are halved here.
+  #
+  # The delta-method result RSE(sqrt(v)) ~= RSE(v)/2 needs a positive variance
+  # v. An OMEGA off-diagonal is a covariance -- it can be negative or zero and
+  # has no square root -- so there is no SD scale to convert it to, and it gets
+  # NA rather than a half-RSE that would read as meaningful. Use the empirical
+  # correlations in `sdCorMatrix` for off-diagonal uncertainty instead.
   ps <- .sirParamSpace(fit)
   kind <- ps$kind[match(param_names, ps$sirName)]
-  onVarianceScale <- !is.na(kind) & kind %in% c("omegaDiag", "omegaOffdiag")
+  onVarianceScale <- !is.na(kind) & kind == "omegaDiag"
   rse_sd_scale <- ifelse(onVarianceScale, rse / 2, NA_real_)
 
   out <- data.frame(

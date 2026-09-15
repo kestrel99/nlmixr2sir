@@ -125,6 +125,12 @@ sirUpdateProposal <- function(
   checkmate::assertFlag(boxcox)
   checkmate::assertNumber(capCorrelation, lower = 0, upper = 1, finite = TRUE)
 
+  # Before anything else: the retained vectors must be able to support a
+  # full-rank covariance. Checked on the untransformed matrix, because that is
+  # where the statistical support actually lives; the Box-Cox map below is
+  # per-coordinate and monotone, so it cannot add support.
+  .sirCheckProposalRank(resampledMat, what = "retained")
+
   param_names <- colnames(resampledMat)
   n_col <- ncol(resampledMat)
 
@@ -152,9 +158,13 @@ sirUpdateProposal <- function(
   cov_mat <- cov(trans_mat)
   dimnames(cov_mat) <- list(param_names, param_names)
   cov_mat <- .sirCapCovCorrelation(cov_mat, capCorrelation = capCorrelation)
-  cov_mat <- .sirEnsurePosDef(cov_mat)
+  repaired <- .sirEnsurePosDef(cov_mat, report = TRUE)
 
-  list(covMat = cov_mat, boxcoxParams = bc_params)
+  list(
+    covMat = repaired$covMat,
+    boxcoxParams = bc_params,
+    posDefAdjusted = repaired$adjusted
+  )
 }
 
 # Step 9 -----------------------------------------------------------------------
@@ -186,6 +196,53 @@ sirUpdateProposal <- function(
     numeric(1L)
   )
   setNames(bc_mu, names(mu))
+}
+
+# log|det J_T(x)| for the Box-Cox map y = T(x), evaluated per row of `mat`.
+#
+# Box-Cox is applied one coordinate at a time, so J_T is diagonal:
+#
+#   T(x)   = ((x + delta)^lambda - 1) / lambda   (log(x + delta) when lambda = 0)
+#   dT/dx  = (x + delta)^(lambda - 1)            (both cases)
+#
+# hence log|det J_T(x)| = sum_j (lambda_j - 1) * log(x_j + delta_j).
+#
+# This is what turns the sampling density q_y into the density actually induced
+# on the original parameter scale, q_x(x) = q_y(T(x)) * |det J_T(x)|. The
+# importance weights divide by q_x, not q_y, so that the retained sample
+# targets the original-scale normalized likelihood rather than a
+# parameterization-dependent tilt of it. PsN omits this term; see NEWS.
+#
+# `mat` holds ORIGINAL-scale values (the back-transformed draws), not the
+# sampled coordinates. Rows whose shifted value is not strictly positive get
+# `NA`, which the weight calculation then drops along with other failures.
+.sirBcLogJacobian <- function(mat, bc_state) {
+  if (is.null(bc_state)) {
+    return(rep(0, nrow(mat)))
+  }
+  out <- numeric(nrow(mat))
+  for (j in seq_len(ncol(mat))) {
+    nm <- colnames(mat)[j]
+    row <- bc_state[bc_state$param == nm, ]
+    if (nrow(row) != 1L) {
+      cli::cli_abort(
+        "Missing Box-Cox parameters for SIR parameter {.val {nm}}."
+      )
+    }
+    # lambda == 1 is a pure shift: no contribution, and skipping it keeps the
+    # common no-transform case exactly zero rather than zero-ish.
+    if (isTRUE(all.equal(row$lambda, 1))) {
+      next
+    }
+    shifted <- mat[, j] + row$delta
+    contrib <- ifelse(
+      is.finite(shifted) & shifted > 0,
+      (row$lambda - 1) * log(shifted),
+      NA_real_
+    )
+    out <- out + contrib
+  }
+  out
 }
 
 .sirBcInverseMatrix <- function(mat, bc_state) {

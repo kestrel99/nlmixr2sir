@@ -23,9 +23,20 @@ sirRunIteration <- function(
   sigmaFallbackRse = 30,
   omegaDf = NULL,
   requestedSamples = nSamples,
-  isLastIteration = FALSE
+  isLastIteration = FALSE,
+  referenceOfv = NULL
 ) {
   omegaFallback <- match.arg(omegaFallback)
+
+  # The OFV that dOFV is measured against. It starts at the fitted optimum and
+  # moves with the centre whenever recentring finds a better one, so later
+  # iterations are not scored against a superseded optimum (PsN does the same
+  # in lib/tool/sir.pm). Passed explicitly so recovery and added iterations
+  # resume from the reference the run actually reached.
+  if (is.null(referenceOfv)) {
+    referenceOfv <- fit$objf
+  }
+  checkmate::assertNumber(referenceOfv, finite = TRUE)
 
   checkmate::assertClass(fit, "nlmixr2FitCore")
   checkmate::assertNumeric(mu, finite = TRUE, any.missing = FALSE, min.len = 1L)
@@ -95,7 +106,7 @@ sirRunIteration <- function(
     workers = workers,
     rxThreads = rxThreads
   )
-  dofv <- ofv_vals - fit$objf
+  dofv <- ofv_vals - referenceOfv
 
   # ---- 5. Handle failures ----
   n_failed <- sum(is.na(dofv))
@@ -130,14 +141,55 @@ sirRunIteration <- function(
   }
 
   # ---- 6. Compute weights in the same full proposal scale used for sampling ----
+  #
+  # When Box-Cox is active the draws above are transformed coordinates, so the
+  # normal density of `samples_for_weights` is not the density induced on the
+  # original parameter scale. The Jacobian converts it, and is passed relative
+  # to the centre so that relPDF stays 1 there.
+  log_jacobian <- if (is.null(boxcoxState)) {
+    NULL
+  } else {
+    mu_row <- matrix(
+      proposal$mu[param_names],
+      nrow = 1L,
+      dimnames = list(NULL, param_names)
+    )
+    .sirBcLogJacobian(param_mat, boxcoxState) -
+      .sirBcLogJacobian(mu_row, boxcoxState)
+  }
   weights <- sirCalcWeights(
     samples_for_weights,
     bc_mu,
     proposal$covMat,
-    dOFV = dofv
+    dOFV = dofv,
+    logJacobian = log_jacobian
   )
 
   # ---- 7. Resample ----
+  #
+  # n_resample_adj was scaled for turnout using the count of samples with a
+  # usable OFV. The binding constraint is narrower: only samples with non-zero
+  # resampling probability can actually be drawn, and a finite dOFV does not
+  # guarantee a finite importance ratio. Clamp here rather than letting
+  # sirResample() abort, so the run degrades the same graceful way it does for
+  # turnout -- and so the message names the real cause.
+  n_usable <- sum(is.finite(weights$prob_resample) & weights$prob_resample > 0)
+  max_draws <- n_usable * as.integer(floor(capResampling))
+  if (n_resample_adj > max_draws) {
+    cli::cli_warn(c(
+      "Only {n_usable} of {n_collected} SIR samples have non-zero resampling probability.",
+      "i" = "Reducing resamples from {n_resample_adj} to {max_draws}.",
+      "i" = "A wider proposal, more samples, or a higher {.arg capResampling} would avoid this."
+    ))
+    n_resample_adj <- max_draws
+  }
+  if (n_resample_adj < 1L) {
+    cli::cli_abort(c(
+      "No SIR samples have non-zero resampling probability.",
+      "i" = "Check the OFV failures and the proposal covariance."
+    ))
+  }
+
   resampled <- sirResample(
     param_mat,
     weights,
@@ -145,13 +197,26 @@ sirRunIteration <- function(
     capResampling = capResampling
   )
 
+  # ---- 7b. Weight degeneracy ----
+  weight_diag <- .sirWeightDiagnostics(
+    weights$prob_resample,
+    nSuccessful = n_success
+  )
+  .sirWarnWeightDegeneracy(weight_diag, iterNum)
+
   # ---- 8. Recenter ----
   new_mu <- proposal$mu
+  new_reference_ofv <- referenceOfv
   if (recenter) {
     valid_dofv <- ifelse(is.na(dofv), Inf, dofv)
     best_idx <- which.min(valid_dofv)
     if (isTRUE(valid_dofv[best_idx] < 0)) {
       new_mu <- param_mat[best_idx, ]
+      # Move the reference with the centre. Within this iteration a constant
+      # dOFV shift cancels in the normalised weights, so this changes nothing
+      # here -- it is later iterations and the chi-square diagnostic that would
+      # otherwise stay pinned to the old optimum.
+      new_reference_ofv <- ofv_vals[[best_idx]]
       cli::cli_inform(
         "  Iter {iterNum}: recentered mu (dOFV = {round(dofv[best_idx], 4)})."
       )
@@ -192,6 +257,12 @@ sirRunIteration <- function(
     nFailed = n_failed,
     nResample = nResample,
     nResampled = nrow(resampled$samples),
+    ess = weight_diag$ess,
+    essFraction = weight_diag$essFraction,
+    maxWeight = weight_diag$maxWeight,
+    perplexity = weight_diag$perplexity,
+    nNonNegligible = weight_diag$nNonNegligible,
+    posDefAdjusted = isTRUE(updated$posDefAdjusted),
     minDOFV = if (all(is.na(dofv))) NA_real_ else min(dofv, na.rm = TRUE),
     meanDOFV = if (all(is.na(dofv))) NA_real_ else mean(dofv, na.rm = TRUE),
     nNegativeDOFV = sum(dofv < 0, na.rm = TRUE),
@@ -205,6 +276,8 @@ sirRunIteration <- function(
     resampledMat = resampled$samples,
     newMu = new_mu,
     newCov = new_cov,
+    referenceOfv = referenceOfv,
+    newReferenceOfv = new_reference_ofv,
     iterSummary = iter_summary,
     boxcoxState = new_bc_state,
     rawResults = raw_df

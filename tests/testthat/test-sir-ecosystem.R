@@ -54,12 +54,26 @@ test_that(".sirCovAsFitCov maps SIR names onto fit$cov names and order", {
 
 test_that(".sirCovAsFitCov declines a rank-deficient covariance", {
   skip_on_cran()
-  # iter1() resamples 4 vectors for 5 parameters, so its empirical covariance
-  # is singular. Registering it would give setCov() an unusable matrix.
+  # Registering a singular covariance would give setCov() an unusable matrix.
+  #
+  # This used to lean on iter1() being rank deficient -- it resampled 4 vectors
+  # for 5 parameters. That is now rejected at source, so the singular matrix is
+  # built here explicitly rather than borrowed from a broken fixture.
   fit <- theoFit()
   s <- sirSummary(iter1()$resampledMat, fit)
+  nm <- colnames(attr(s, "covMatrix"))
+  # Genuinely singular and symmetric: the covariance of fewer vectors than
+  # there are parameters has rank at most nrow - 1, so chol() must fail.
+  set.seed(5)
+  cm <- stats::cov(matrix(
+    stats::rnorm(3L * length(nm)),
+    nrow = 3L,
+    dimnames = list(NULL, nm)
+  ))
+  expect_true(inherits(try(chol(cm), silent = TRUE), "try-error"))
+
   expect_message(
-    out <- .sirCovAsFitCov(fit, attr(s, "covMatrix"), .sirParamSpace(fit)),
+    out <- .sirCovAsFitCov(fit, cm, .sirParamSpace(fit)),
     "not positive definite"
   )
   expect_null(out)
@@ -119,8 +133,8 @@ test_that("runSIR registers a covariance that setCov() can select", {
   set.seed(3)
   suppressMessages(runSIR(
     fit,
-    nSamples = 12L,
-    nResample = 6L,
+    nSamples = 16L,
+    nResample = 8L,
     directory = tmp,
     control = runSIRControl(recover = FALSE, workers = 1L)
   ))

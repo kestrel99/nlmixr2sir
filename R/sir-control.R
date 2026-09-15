@@ -29,6 +29,26 @@
 #'   workers. Whenever `workers > 1`, `workers * rxThreads` must not exceed the
 #'   machine's core count, since each worker is a separate process running its
 #'   own rxode2 thread pool.
+#' @param saveFiles Logical. If `TRUE` (default) the run writes its raw
+#'   results, summaries, covariance files, seed and resumable state to
+#'   `directory`. Set to `FALSE` to run entirely in memory, writing nothing and
+#'   creating no directory; the result is returned as usual. Recovery,
+#'   `addIterations`, and per-iteration seed reproduction all need the saved
+#'   state, so they are unavailable when this is `FALSE` -- seed a run with
+#'   `set.seed()` beforehand to reproduce it.
+#' @param objfStencil Logical. If `TRUE` (default) the objective preflight also
+#'   evaluates small perturbations either side of every parameter and requires
+#'   the fitted estimates to remain a local optimum. Agreement at the centre
+#'   alone does not establish that two objectives are the same function.
+#' @param objfStencilTolerance Non-negative number. How much a probe may lower
+#'   the objective before the run is refused. Smaller decreases warn instead,
+#'   since a fit that stopped just short of convergence is common and harmless.
+#' @param objfTolerance Non-negative number. Before sampling, SIR re-evaluates
+#'   the objective at the fit's own estimates and compares it with
+#'   `fit$objf`; the run aborts unless the absolute or relative difference is
+#'   within this tolerance. It is the per-run evidence that candidates are
+#'   scored on the same surface the dOFVs are measured against. Raise it only
+#'   when the difference is understood.
 #' @param recover Logical. If `TRUE` and the output directory holds
 #'   `sir_state.rds`, resume from the last completed iteration when possible.
 #' @param addIterations Logical. If `TRUE`, append the supplied schedule after
@@ -87,6 +107,10 @@ runSIRControl <- function(
   rxThreads = NULL,
   recover = TRUE,
   addIterations = FALSE,
+  saveFiles = TRUE,
+  objfTolerance = 1e-4,
+  objfStencil = TRUE,
+  objfStencilTolerance = 1,
   omegaFallback = c("cov", "wishart"),
   sigmaFallbackRse = 30,
   omegaDf = NULL,
@@ -127,6 +151,16 @@ runSIRControl <- function(
   checkmate::assertFlag(boxcox)
   checkmate::assertFlag(recover)
   checkmate::assertFlag(addIterations)
+  checkmate::assertFlag(saveFiles)
+  if (!saveFiles && isTRUE(addIterations)) {
+    cli::cli_abort(c(
+      "{.arg addIterations} needs {.arg saveFiles} to be {.code TRUE}.",
+      "i" = "Extending a run reads the saved state of the run it extends."
+    ))
+  }
+  checkmate::assertNumber(objfTolerance, lower = 0, finite = TRUE)
+  checkmate::assertFlag(objfStencil)
+  checkmate::assertNumber(objfStencilTolerance, lower = 0, finite = TRUE)
   checkmate::assertNumber(sigmaFallbackRse, lower = 0, finite = TRUE)
   if (!is.null(omegaDf)) {
     checkmate::assertNumber(omegaDf, lower = 1, finite = TRUE)
@@ -188,6 +222,10 @@ runSIRControl <- function(
       rxThreads = rxThreads,
       recover = recover,
       addIterations = addIterations,
+      saveFiles = saveFiles,
+      objfTolerance = objfTolerance,
+      objfStencil = objfStencil,
+      objfStencilTolerance = objfStencilTolerance,
       omegaFallback = omegaFallback,
       sigmaFallbackRse = sigmaFallbackRse,
       omegaDf = omegaDf,
