@@ -190,6 +190,22 @@ sirRunIteration <- function(
     ))
   }
 
+  # A schedule can be feasible as requested and infeasible as realized:
+  # evaluations fail, and the turnout and cap clamps above cut the retained
+  # count further. The empirical covariance needs more than p vectors, so stop
+  # here rather than inside .sirCheckProposalRank(), which sees only the final
+  # count and advises raising nResample -- the wrong remedy when the real cause
+  # is that most candidates never evaluated.
+  n_param_cols <- ncol(param_mat)
+  if (n_resample_adj <= n_param_cols) {
+    cli::cli_abort(c(
+      "Too few usable candidates to update the proposal.",
+      "x" = "{n_usable} of {n_collected} candidate{?s} could be scored and weighted, for {n_param_cols} parameter{?s}.",
+      "i" = "{n_resample_adj} vector{?s} would be retained; the covariance would have rank at most {max(n_resample_adj - 1L, 0L)}.",
+      "i" = "Increase {.arg nSamples}, or check why candidates are failing to evaluate."
+    ))
+  }
+
   resampled <- sirResample(
     param_mat,
     weights,
@@ -265,7 +281,12 @@ sirRunIteration <- function(
     maxWeight = weight_diag$maxWeight,
     perplexity = weight_diag$perplexity,
     nNonNegligible = weight_diag$nNonNegligible,
+    # Two different repairs, deliberately separate columns. posDefAdjusted is
+    # the empirical update this iteration produced for the NEXT one;
+    # proposalRepaired is the covariance this iteration actually drew from.
     posDefAdjusted = isTRUE(updated$posDefAdjusted),
+    proposalRepaired = isTRUE(proposal$initialRepair$adjusted),
+    proposalRepairMagnitude = proposal$initialRepair$magnitude %||% NA_real_,
     minDOFV = if (all(is.na(dofv))) NA_real_ else min(dofv, na.rm = TRUE),
     meanDOFV = if (all(is.na(dofv))) NA_real_ else mean(dofv, na.rm = TRUE),
     nNegativeDOFV = sum(dofv < 0, na.rm = TRUE),
@@ -279,6 +300,9 @@ sirRunIteration <- function(
     resampledMat = resampled$samples,
     newMu = new_mu,
     newCov = new_cov,
+    # The full record for the covariance this iteration sampled from. runSIR()
+    # keeps iteration 1's as the run's initial-proposal provenance.
+    proposalRepair = proposal$initialRepair,
     referenceOfv = referenceOfv,
     newReferenceOfv = new_reference_ofv,
     iterSummary = iter_summary,

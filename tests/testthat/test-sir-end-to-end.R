@@ -11,7 +11,7 @@ test_that("runSIR writes the complete artifact set", {
   set.seed(20260913)
   res <- suppressMessages(runSIR(
     theoFit(),
-    nSamples = c(6L, 6L),
+    nSamples = c(16L, 16L),
     nResample = c(8L, 8L),
     directory = tmp,
     fitName = "demo",
@@ -66,7 +66,7 @@ test_that("recover returns the completed run instead of repeating it", {
   set.seed(42)
   first <- suppressMessages(runSIR(
     theoFit(),
-    nSamples = c(6L, 6L),
+    nSamples = c(16L, 16L),
     nResample = c(8L, 8L),
     directory = tmp,
     control = runSIRControl(recover = FALSE, workers = 1L)
@@ -78,7 +78,7 @@ test_that("recover returns the completed run instead of repeating it", {
   set.seed(999)
   again <- suppressMessages(runSIR(
     theoFit(),
-    nSamples = c(6L, 6L),
+    nSamples = c(16L, 16L),
     nResample = c(8L, 8L),
     directory = tmp,
     control = runSIRControl(recover = TRUE, workers = 1L)
@@ -96,7 +96,7 @@ test_that("addIterations extends a completed run", {
   set.seed(7)
   first <- suppressMessages(runSIR(
     theoFit(),
-    nSamples = c(6L, 6L),
+    nSamples = c(16L, 16L),
     nResample = c(8L, 8L),
     directory = tmp,
     control = runSIRControl(recover = FALSE, workers = 1L)

@@ -106,7 +106,14 @@
   if (min(eig$values) >= floor_at) {
     dimnames(cov_mat) <- dim_names
     if (report) {
-      return(list(covMat = cov_mat, adjusted = FALSE, floor = floor_at))
+      return(list(
+        covMat = cov_mat,
+        adjusted = FALSE,
+        floor = floor_at,
+        method = "correlation-eigenvalue-floor",
+        threshold = relTol,
+        magnitude = 0
+      ))
     }
     return(cov_mat)
   }
@@ -125,7 +132,16 @@
   if (report) {
     # A repaired covariance is a fact about the run that belongs in its
     # provenance, even when the repair is only roundoff.
-    return(list(covMat = cov_mat, adjusted = TRUE, floor = floor_at))
+    return(list(
+      covMat = cov_mat,
+      adjusted = TRUE,
+      floor = floor_at,
+      method = "correlation-eigenvalue-floor",
+      threshold = relTol,
+      # Largest absolute change to any entry, in the original coordinates.
+      # The flag alone says a repair happened; this says whether it mattered.
+      magnitude = max(abs(cov_mat - covMat))
+    ))
   }
   cov_mat
 }

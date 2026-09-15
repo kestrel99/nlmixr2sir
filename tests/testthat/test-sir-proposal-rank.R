@@ -140,3 +140,67 @@ test_that("a raw-results proposal with too few vectors is an error, not a warnin
     "rank|Too few"
   )
 })
+
+test_that("nSamples too small for the parameter count fails before evaluation", {
+  skip_on_cran()
+  fit <- theoFit()
+  np <- nrow(.sirParamSpace(fit))
+  # nResample is large enough to clear the existing check, so this can only be
+  # the nSamples one. A candidate must be drawn before it can be retained.
+  expect_error(
+    runSIR(
+      fit,
+      nSamples = np,
+      nResample = np + 1L,
+      control = runSIRControl(workers = 1L, saveFiles = FALSE)
+    ),
+    "nSamples"
+  )
+})
+
+test_that("a resampling cap that cannot supply nResample fails before evaluation", {
+  skip_on_cran()
+  fit <- theoFit()
+  np <- nrow(.sirParamSpace(fit))
+  # capResampling = 1 retains each candidate at most once, so nSamples draws
+  # can never fill more than nSamples slots.
+  expect_error(
+    runSIR(
+      fit,
+      nSamples = np + 2L,
+      nResample = np + 5L,
+      control = runSIRControl(workers = 1L, capResampling = 1, saveFiles = FALSE)
+    ),
+    "capResampling"
+  )
+})
+
+test_that("too few usable candidates aborts with a feasibility message", {
+  skip_on_cran()
+  fit <- theoFit()
+  np <- nrow(.sirParamSpace(fit))
+
+  # The schedule is feasible as requested: 20 samples, np + 1 resamples. It is
+  # infeasible as realized, because only np candidates evaluate. Before the
+  # check this surfaced inside .sirCheckProposalRank() as advice to increase
+  # nResample, which was not the problem.
+  testthat::local_mocked_bindings(
+    sirEvalOFV = function(fit, paramSamples, ...) {
+      n <- nrow(paramSamples)
+      c(rep(NA_real_, n - np), rep(fit$objf, np))
+    }
+  )
+
+  expect_error(
+    suppressWarnings(sirRunIteration(
+      fit,
+      mu = .sirProposalMu(fit),
+      proposalCov = sirGetProposalCov(fit),
+      nSamples = 20L,
+      nResample = np + 1L,
+      iterNum = 1L,
+      directory = NULL
+    )),
+    "usable candidate"
+  )
+})

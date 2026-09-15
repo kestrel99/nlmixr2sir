@@ -54,6 +54,16 @@ print.nlmixr2SIR <- function(x, ..., digits = 3) {
     cli::cli_alert_info("Output directory: {.path {output_dir}}")
   }
 
+  # Only when it actually happened: a repair of the covariance every
+  # iteration-1 candidate was drawn from is a fact about the result, but saying
+  # "no repair needed" on every ordinary run is noise.
+  initial_repair <- attr(x, "initialProposalRepair", exact = TRUE)
+  if (isTRUE(initial_repair$adjusted)) {
+    cli::cli_alert_info(
+      "Initial proposal covariance needed positive-definite repair (largest change {format(initial_repair$magnitude, digits = 3)})."
+    )
+  }
+
   summary_cols <- intersect(
     c("param", "estimate", "sd", "rse", "p2.5", "p50", "p97.5"),
     names(x)

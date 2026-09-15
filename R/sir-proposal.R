@@ -297,7 +297,12 @@ sirGetProposalCov <- function(
     paramNames = fullNames,
     omegaRoute = route,
     fallbackNames = missingNames,
-    posDefAdjusted = posDefAdjusted
+    posDefAdjusted = posDefAdjusted,
+    # The full repair record, not just the flag. This is the covariance every
+    # iteration-1 candidate is drawn from, so whether and how much it was
+    # altered belongs in the run's provenance alongside the per-iteration
+    # repairs of later empirical updates.
+    initialRepair = repaired[c("adjusted", "method", "threshold", "magnitude")]
   )
 }
 

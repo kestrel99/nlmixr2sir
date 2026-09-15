@@ -108,6 +108,33 @@ runSIR <- function(
     ))
   }
 
+  # A candidate must be drawn before it can be retained, so nSamples bounds the
+  # retained set too. Without this the run reached .sirCheckProposalRank() after
+  # a full round of model evaluations and then blamed nResample, which was fine.
+  if (min(nSamples) <= n_params) {
+    bad <- nSamples[nSamples <= n_params]
+    cli::cli_abort(c(
+      "{.arg nSamples} is too small for the number of estimated parameters.",
+      "x" = "Requested {.val {bad}} for {n_params} parameter{?s}.",
+      "i" = "At most {min(bad)} distinct vector{?s} can be drawn, so the retained sample cannot reach full rank.",
+      "i" = "Increase {.arg nSamples}; PsN's working ratio is about 5 samples per resample."
+    ))
+  }
+
+  # Limited replacement: each candidate fills at most capResampling slots, so
+  # nSamples draws can supply at most nSamples * cap retained vectors. Asking
+  # for more silently produced a clamped run rather than saying so.
+  cap_int <- max(1L, as.integer(floor(capResampling)))
+  if (any(nResample > nSamples * cap_int)) {
+    j <- which(nResample > nSamples * cap_int)[[1L]]
+    cli::cli_abort(c(
+      "{.arg nResample} cannot be met under the current {.arg capResampling}.",
+      "x" = "Iteration {j} asks for {nResample[[j]]} from {nSamples[[j]]} candidate{?s} at cap {cap_int}.",
+      "i" = "The cap allows at most {nSamples[[j]] * cap_int} retained vector{?s}.",
+      "i" = "Lower {.arg nResample}, raise {.arg nSamples}, or raise {.code runSIRControl(capResampling =)}."
+    ))
+  }
+
   # Before anything expensive or destructive: prove that the evaluator used for
   # candidates reproduces this fit's own objective. Every dOFV is measured
   # against fit$objf, so if the two are on different surfaces the importance
@@ -302,6 +329,13 @@ runSIR <- function(
     prev_successful <- NULL
   }
 
+  # A resumed run must not lose the record: its iteration 1 is not re-run.
+  initial_repair <- if (is.null(saved_state)) {
+    NULL
+  } else {
+    saved_state$initialProposalRepair
+  }
+
   reference_ofv_history <- if (is.null(saved_state)) {
     numeric(0)
   } else {
@@ -369,6 +403,12 @@ runSIR <- function(
 
     iter_results[[as.character(iter_num)]] <- iter_res
     iter_summary <- rbind(iter_summary, iter_res$iterSummary)
+    # Iteration 1 builds its proposal from the resolved initial covariance, so
+    # its repair record is the run's. Later iterations repair an empirical
+    # update instead, which iter_summary already tracks per iteration.
+    if (is.null(initial_repair)) {
+      initial_repair <- iter_res$proposalRepair
+    }
     if (saveFiles) {
       .sirWriteIterationSummary(iter_summary, output_dir)
       .sirWriteRejectionSummary(iter_summary, output_dir)
@@ -391,6 +431,7 @@ runSIR <- function(
       list(
         fingerprint = fingerprint,
         schedule = cumulative_schedule,
+        initialProposalRepair = initial_repair,
         proposalSource = proposal_source,
         referenceOfvHistory = reference_ofv_history,
         completedIterations = iter_num,
@@ -445,6 +486,7 @@ runSIR <- function(
   # algorithm that actually ran rather than assuming defaults.
   attr(summary_df, "control") <- control
   attr(summary_df, "schedule") <- cumulative_schedule
+  attr(summary_df, "initialProposalRepair") <- initial_repair
   attr(summary_df, "proposalSource") <- proposal_source
   attr(summary_df, "referenceOfvHistory") <- reference_ofv_history
   attr(summary_df, "fingerprint") <- fingerprint
@@ -456,6 +498,7 @@ runSIR <- function(
       list(
         fingerprint = fingerprint,
         schedule = cumulative_schedule,
+        initialProposalRepair = initial_repair,
         proposalSource = proposal_source,
         referenceOfvHistory = reference_ofv_history,
         completedIterations = tail(iter_summary$iter, 1L),

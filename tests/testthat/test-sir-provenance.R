@@ -211,3 +211,28 @@ test_that("a state file from an older schema version is refused", {
   )
   expect_match(err, "stateVersion|version")
 })
+
+test_that("initial proposal repair is recorded separately from iteration repair", {
+  skip_on_cran()
+  fit <- theoFit()
+  res <- suppressMessages(suppressWarnings(runSIR(
+    fit,
+    nSamples = 16L,
+    nResample = 8L,
+    control = runSIRControl(workers = 1L, saveFiles = FALSE)
+  )))
+
+  ip <- attr(res, "initialProposalRepair")
+  expect_type(ip, "list")
+  expect_named(
+    ip,
+    c("adjusted", "method", "threshold", "magnitude"),
+    ignore.order = TRUE
+  )
+  expect_false(is.null(ip$adjusted))
+  expect_true(is.logical(ip$adjusted))
+  expect_true(is.finite(ip$magnitude))
+  # Distinct from the per-iteration record, which covers later empirical
+  # updates rather than the covariance iteration 1 is drawn from.
+  expect_true("posDefAdjusted" %in% names(attr(res, "iterationSummary")))
+})
